@@ -1,0 +1,5 @@
+# 峰时守卫（dsh-peak-window）的 Loader 补丁：
+# 整个插件只有一行 Host 条目，界面完全由客户端的 ./client 模块注册。
+- insert:
+    - id: peak-guard
+      name: dsh-peak-window
