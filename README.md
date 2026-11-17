@@ -129,3 +129,13 @@ __dshPeakGuardDebug.readState()       // 当前设置与卡片状态
 3. 命中输入卡内的发送按钮且此刻该拦 → `preventDefault + stopPropagation`，React 的 `onClick` 不执行，发送被冻结在"点下去之前"；
 4. 「继续」把同一个按钮重放一次 `click()`（放行标记跳过自己的监听），投递模式、埋点、焦点都交回宿主；「返回」只关卡片，草稿天然保留；
 5. `settings.section` 注册一页「峰时守卫」，与卡片里的设置面板共用 `SettingsPanel`（`variant='page'` 切换成宿主主题配色），因此不弹卡也能改设置。
+
+## 链接
+
+- 源码仓库：<https://github.com/ltw2522/dsh-peak-window>
+- npm 包：<https://www.npmjs.com/package/dsh-peak-window>
+- 问题反馈：<https://github.com/ltw2522/dsh-peak-window/issues>
+
+## 许可证
+
+MIT
