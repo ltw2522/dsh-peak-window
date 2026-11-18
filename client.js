@@ -1430,9 +1430,14 @@ window.__ModuleLoader__.load({
       '.dpg-page .dpg-switch{background:var(--dsw-alias-bg-layer-2);',
       'box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}',
       '.dpg-page .dpg-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary);box-shadow:none}',
-      '.dpg-page .dpg-knob{box-shadow:0 1px 2px rgba(0,0,0,.18)}',
-      '.dpg-page .dpg-switch[aria-checked="false"] .dpg-knob{background:var(--dsw-alias-label-secondary)}',
+      // 旋钮在两种状态下都保持白色：和宿主自己的开关一致，关态靠浅灰轨道区分
+      '.dpg-page .dpg-knob{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.16)}',
 
+      // 被开关关掉的那一行：整体降不透明度 + 输入框指向 not-allowed，
+      // 说明"值还在，只是现在改不了"
+      '.dpg-row-disabled{opacity:.45;pointer-events:none}',
+      '.dpg-hint-disabled{opacity:.45}',
+      '.dpg-row-disabled .dpg-num{cursor:not-allowed}',
       '.dpg-hint{margin-top:8px;font-size:11px;line-height:1.6;color:rgba(255,255,255,.5)}',
       // 放假数据那块是"一行状态 + 若干行说明"，用列容器把它们叠起来
       '.dpg-col{display:flex;flex-direction:column;gap:4px;margin-top:8px}',
@@ -1618,13 +1623,15 @@ window.__ModuleLoader__.load({
        * @param {string} testId 供结构自测定位
        * @returns {object} React 元素
        */
-      function numberInput(value, onChange, onBlur, testId) {
+      function numberInput(value, onChange, onBlur, testId, disabled) {
         return h('input', {
           type: 'number',
           className: 'dpg-num',
           value,
           min: 0,
           max: 999,
+          // 不可编辑时明确 disabled：既挡住键盘，也让浏览器给出灰态外观
+          disabled: !!disabled,
           'data-testid': testId,
           onChange: (event) => onChange(event.target.value),
           onBlur,
@@ -1776,13 +1783,17 @@ window.__ModuleLoader__.load({
           patchSettings({ repeatEnabled: !settings.repeatEnabled });
         }, 'peak-guard-repeat-switch'),
 
-        settings.repeatEnabled
-          ? h('div', { className: 'dpg-row' },
-              h('span', null, t('repeatEvery')),
-              h('span', { className: 'dpg-field' },
-                numberInput(repeatText, setRepeatText, commitRepeat, 'peak-guard-repeat-minutes'),
-                h('span', { className: 'dpg-unit' }, t('minuteUnit'))))
-          : null,
+        // 重复间隔常驻显示：关掉「重复提醒」时只置灰不可编辑，
+        // 不让整行消失——否则页面高度跳一下，用户还会以为设置丢了、值也被重置。
+        h('div', {
+          className: settings.repeatEnabled ? 'dpg-row' : 'dpg-row dpg-row-disabled',
+          'data-testid': 'peak-guard-repeat-row',
+          'data-disabled': settings.repeatEnabled ? 'false' : 'true',
+        },
+          h('span', null, t('repeatEvery')),
+          h('span', { className: 'dpg-field' },
+            numberInput(repeatText, setRepeatText, commitRepeat, 'peak-guard-repeat-minutes', !settings.repeatEnabled),
+            h('span', { className: 'dpg-unit' }, t('minuteUnit')))),
 
         switchRow(t('runningLabel'), settings.remindWhileRunning, () => {
           patchSettings({ remindWhileRunning: !settings.remindWhileRunning });
@@ -1835,7 +1846,11 @@ window.__ModuleLoader__.load({
         settings.debugMode ? debugSection() : null,
 
         h('div', { className: 'dpg-hint' }, t('leadHint')),
-        settings.repeatEnabled ? h('div', { className: 'dpg-hint' }, t('repeatHint')) : null);
+        // 说明文字同理常驻：关掉重复提醒时它也跟着变灰，
+        // 但页面高度保持不变，避免开关一按整页上下跳。
+        h('div', {
+          className: settings.repeatEnabled ? 'dpg-hint' : 'dpg-hint dpg-hint-disabled',
+        }, t('repeatHint')));
     }
 
     /**

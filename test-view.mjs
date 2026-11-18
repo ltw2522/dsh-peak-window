@@ -58,13 +58,20 @@ const t = (key, vars) => {
 };
 
 /* —— 渲染并把对象树压平成可断言的文本/按钮列表 —— */
-function collect(node, out = { texts: [], buttons: [], classNames: [] }) {
+function collect(node, out = { texts: [], buttons: [], classNames: [], inputs: [] }) {
   if (node === null || node === undefined || node === false) return out;
   if (Array.isArray(node)) { node.forEach((child) => collect(child, out)); return out; }
   if (typeof node === 'string' || typeof node === 'number') { out.texts.push(String(node)); return out; }
   if (typeof node.type === 'function') return collect(node.type(node.props), out);   // 子组件就地展开
   const className = node.props.className || '';
   if (className) out.classNames.push(className);
+  if (node.type === 'input') {
+    out.inputs.push({
+      testId: node.props['data-testid'] || '',
+      value: node.props.value,
+      disabled: node.props.disabled === true,
+    });
+  }
   if (node.type === 'button') {
     out.buttons.push({
       className,
@@ -113,6 +120,19 @@ assert.ok(text.includes('回车发送同样拦截'), '缺少回车拦截开关')
 assert.ok(text.includes('工作日 09:00–12:00'), '缺少峰时口径说明');
 assert.ok(view.buttons.some((b) => b.text === '完成'), '设置面板应有完成按钮');
 assert.ok(view.classNames.some((name) => name.includes('dpg-switch')), '开关应使用 dpg-switch 样式');
+
+// 关掉「重复提醒」后：重复间隔这一行要留着，只是变成灰色不可编辑
+dbg.patchSettings({ repeatEnabled: false });
+const offPanel = collect(dbg.components.SettingsPage({ t }));
+const offInterval = offPanel.inputs.find((input) => input.testId === 'peak-guard-repeat-minutes');
+assert.ok(offInterval, '关掉重复提醒后，重复间隔输入框不应消失');
+assert.strictEqual(offInterval.disabled, true, '关掉重复提醒后，重复间隔应为不可编辑');
+assert.ok(offPanel.classNames.some((name) => name.split(/\s+/).includes('dpg-row-disabled')),
+  '关掉重复提醒后，该行应带置灰样式');
+dbg.patchSettings({ repeatEnabled: true });
+const onPanel = collect(dbg.components.SettingsPage({ t }));
+const onInterval = onPanel.inputs.find((input) => input.testId === 'peak-guard-repeat-minutes');
+assert.strictEqual(onInterval.disabled, false, '打开重复提醒后，重复间隔应恢复可编辑');
 
 /* —— 场景三之二：暂停后的两种告知卡 —— */
 dbg.dismissDialog();
