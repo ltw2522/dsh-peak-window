@@ -279,6 +279,10 @@ window.__ModuleLoader__.load({
       debugTierOff: 'off-peak',
     };
 
+    // 版本号由 build 时手工同步 package.json；调试出口会把它带出来，
+    // 用来确认"浏览器里跑的到底是哪一版"（改完 CSS 没生效时尤其有用）。
+    const PLUGIN_VERSION = '1.2.3';
+
     /* ==================== 二、时间判定 ==================== */
     // 全部是纯函数：输入时间戳，输出布尔值或时刻，不读全局状态，方便单测直接调。
     // 这些函数被 __dshPeakGuardDebug 暴露出去，test-guard.mjs 就是照着它们写的断言。
@@ -1427,9 +1431,10 @@ window.__ModuleLoader__.load({
       // 浅色页（设置页）里的「关」态：卡片用的半透明白在白底上等于隐形，
       // 这里改成主题底色 + 描边，保证默认关闭的开关（例如调试模式）一眼能找到。
       // 这三条只作用于设置页，卡片里那套深色配色一个字都不动
-      '.dpg-page .dpg-switch{background:var(--dsw-alias-bg-layer-2);',
-      'box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}',
-      '.dpg-page .dpg-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary);box-shadow:none}',
+      // 颜色写死而不用 token：本主题里 --dsw-alias-brand-primary 解析成墨色而不是蓝，
+      // 直接取宿主开关的实测值（蓝 #5d8bfd / 灰 #e7e7e8），跨主题也不会跑偏。
+      '.dpg-page .dpg-switch{background:#e7e7e8;box-shadow:inset 0 0 0 1px #cfcfd0}',
+      '.dpg-page .dpg-switch[aria-checked="true"]{background:#5d8bfd;box-shadow:none}',
       // 旋钮在两种状态下都保持白色：和宿主自己的开关一致，关态靠浅灰轨道区分
       '.dpg-page .dpg-knob{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.16)}',
 
@@ -2096,6 +2101,8 @@ window.__ModuleLoader__.load({
     // 自测出口：时间判定与门禁是纯函数，挂到 window 上便于用脚本复核（不影响插件行为）
     if (typeof window !== 'undefined') {
       window.__dshPeakGuardDebug = {
+        // 第一项就是版本号：控制台输入 __dshPeakGuardDebug.version 即可
+        version: PLUGIN_VERSION,
         isPeak,
         // 调试模式：测试可以快进时钟、强制档位，再断言 gateAt 的行为
         nowMs,

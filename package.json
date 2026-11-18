@@ -1,6 +1,6 @@
 {
   "name": "dsh-peak-window",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "DSH 峰时守卫：峰时点发送前弹确认卡，谷时临近峰时给非阻断提醒；放假安排自动更新。",
   "repository": {
     "type": "git",
