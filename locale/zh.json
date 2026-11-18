@@ -4,7 +4,7 @@
     "description": "发送前自动判定峰时/谷时：峰时先弹确认卡（继续发送，或返回并保留草稿），谷时临近峰时先提醒一次，可设置提前量与重复间隔。",
     "detail": "docs/DETAIL.md"
   },
-  "peakTitle": "此时为峰时",
+  "peakTitle": "当前为峰时",
   "peakBody": "{remain} 后转谷时",
   "nearTitle": "距离峰时仅剩 {remain}",
   "nearBody": "峰时价格更高，可先返回稍后再发送",
@@ -32,5 +32,14 @@
   "holiBuiltin": "内置表（{years} 年）",
   "holiUpdated": "已更新 {when}",
   "holiFailed": "更新失败，继续使用本地数据",
-  "doneLabel": "完成"
+  "doneLabel": "完成",
+  "pauseLabel": "暂停，谷时自动恢复执行",
+  "pauseHint": "先把这次输入存下来，等转谷时自动发出",
+  "deferredTitle": "已暂停，等谷时自动发送",
+  "deferredBody": "转谷时（约 {remain} 后）会自动发出你刚才存下的内容",
+  "deferredElsewhereTitle": "暂停的对话不在当前会话",
+  "deferredElsewhereBody": "请切回原来那个会话，转谷时插件会自动把内容发出去",
+  "pendingLabel": "已暂停待发送",
+  "pendingValue": "{when} 自动发送",
+  "pendingCancel": "取消暂停"
 }

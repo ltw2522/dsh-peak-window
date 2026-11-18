@@ -83,10 +83,13 @@ dbg.dismissDialog();
 dbg.openDialog({ kind: 'peak', atMs: Date.now() + 2 * 3600 * 1000 }, 'test');
 let view = render({ t });
 let text = view.texts.join(' ');
-assert.ok(text.includes('此时为峰时'), `峰时卡标题缺失：${text}`);
+assert.ok(text.includes('当前为峰时'), `峰时卡标题缺失：${text}`);
 assert.ok(/2h00m 后转谷时/.test(text), `峰时卡应显示剩余时长：${text}`);
 assert.ok(view.buttons.some((b) => b.text === '继续' && b.className.includes('dpg-btn-danger')), '继续按钮应为红色');
 assert.ok(view.buttons.some((b) => b.text === '返回' && b.className.includes('dpg-btn-neutral')), '返回按钮应为浅灰');
+// 暂停：文案与需求逐字一致，且独立占一行（dpg-actions-pause），不与返回/继续挤在一起
+assert.ok(view.buttons.some((b) => b.text === '暂停，谷时自动恢复执行' && b.testId === 'peak-guard-pause'),
+  '峰时卡应有「暂停，谷时自动恢复执行」按钮');
 
 /* —— 场景二：谷时临近峰时提醒（只有一个按钮） —— */
 dbg.dismissDialog();
@@ -110,6 +113,21 @@ assert.ok(text.includes('回车发送同样拦截'), '缺少回车拦截开关')
 assert.ok(text.includes('工作日 09:00–12:00'), '缺少峰时口径说明');
 assert.ok(view.buttons.some((b) => b.text === '完成'), '设置面板应有完成按钮');
 assert.ok(view.classNames.some((name) => name.includes('dpg-switch')), '开关应使用 dpg-switch 样式');
+
+/* —— 场景三之二：暂停后的两种告知卡 —— */
+dbg.dismissDialog();
+dbg.openDialog({ kind: 'deferred', atMs: Date.now() + 2 * 3600 * 1000 }, 'pause');
+view = render({ t });
+text = view.texts.join(' ');
+assert.ok(text.includes('已暂停，等谷时自动发送'), `暂停告知卡标题缺失：${text}`);
+assert.ok(text.includes('2h00m'), `暂停告知卡应显示剩余时长：${text}`);
+assert.ok(view.buttons.some((b) => b.text === '知道了'), '暂停告知卡应有「知道了」');
+assert.ok(!view.buttons.some((b) => b.text === '继续'), '暂停告知卡不应有继续按钮');
+
+dbg.openDialog({ kind: 'deferred-elsewhere', atMs: Date.now() + 8000 }, 'auto');
+view = render({ t });
+text = view.texts.join(' ');
+assert.ok(text.includes('暂停的对话不在当前会话'), `跨会话提示缺失：${text}`);
 
 /* —— 场景四：设置页（从「设置」里随时可打开的那一页） —— */
 dbg.dismissDialog();

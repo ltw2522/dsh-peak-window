@@ -57,6 +57,10 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-peak-window';
     const CONV_NS = 'ui-conversation';
     const SETTINGS_KEY = 'dsh-peak-window:settings:v1';
+    // 暂停待发的草稿：单独一个键，因为它跨刷新、跨重启都要留着，
+    // 和设置的生命周期不同（设置是长期偏好，草稿是一次性的待办）
+    // 待发草稿的存储键：带版本后缀，将来结构变了直接换 v2，不必写迁移代码
+    const DEFER_KEY = 'dsh-peak-window:pending:v1';
     // 旧包名（dsh-peak-guard）时期的存储键。改名是为了上架 npm，但老用户的设置与放假缓存
     // 都还躺在旧键里，直接换键等于让他们回到默认值、还要重拉一次数据，所以保留这两个只读别名。
     const LEGACY_SETTINGS_KEY = 'dsh-peak-guard:settings:v1';
@@ -155,6 +159,7 @@ window.__ModuleLoader__.load({
     // 元信息会镜像进 store，设置页据此显示"上次更新于何时、数据从哪来"。
     // 注意：集合本身不进 store —— 它是大对象且不参与渲染，只参与判定，放进快照纯属浪费。
     let holidaySets = { offDays: new Set(HOLIDAYS), workDays: new Set(BUILTIN_WORKDAYS) };
+    // 放假数据的运行时状态：只做展示与判断用，不参与渲染以外的事情
     let holidayInfo = {
       fetchedAt: 0,            // 上次成功拉取的时刻；0 表示从未成功过
       source: 'builtin',       // builtin=内置表 / cache=本地缓存 / network=刚拉到的
@@ -166,7 +171,7 @@ window.__ModuleLoader__.load({
     // 界面文案（客户端半是单文件模块，不引入 JSON 加载，故内置字典；
     // locale/*.json 只负责插件列表里的标题与描述）
     const ZH = {
-      peakTitle: '此时为峰时',
+      peakTitle: '当前为峰时',
       peakBody: '{remain} 后转谷时',
       nearTitle: '距离峰时仅剩 {remain}',
       nearBody: '峰时价格更高，可先返回稍后再发送',
@@ -195,6 +200,15 @@ window.__ModuleLoader__.load({
       holiBuiltin: '内置表（{years} 年）',
       holiUpdated: '已更新 {when}',
       holiFailed: '更新失败，继续使用本地数据',
+      pauseLabel: '暂停，谷时自动恢复执行',
+      pauseHint: '先把这次输入存下来，等转谷时自动发出',
+      deferredTitle: '已暂停，等谷时自动发送',
+      deferredBody: '转谷时（约 {remain} 后）会自动发出你刚才存下的内容',
+      deferredElsewhereTitle: '暂停的对话不在当前会话',
+      deferredElsewhereBody: '请切回原来那个会话，转谷时插件会自动把内容发出去',
+      pendingLabel: '已暂停待发送',
+      pendingValue: '{when} 自动发送',
+      pendingCancel: '取消暂停',
     };
 
     // 英文文案：键与中文完全一一对应，缺键会让插件在英文界面下显示键名。
@@ -229,6 +243,15 @@ window.__ModuleLoader__.load({
       holiBuiltin: 'Built-in table ({years})',
       holiUpdated: 'Updated {when}',
       holiFailed: 'Update failed, still using local data',
+      pauseLabel: 'Pause and auto-send off-peak',
+      pauseHint: 'Keeps this draft and sends it once off-peak starts',
+      deferredTitle: 'Paused, will send off-peak',
+      deferredBody: 'Sends your saved draft when off-peak starts (about {remain})',
+      deferredElsewhereTitle: 'Paused draft belongs to another conversation',
+      deferredElsewhereBody: 'Switch back to that conversation; it will be sent when off-peak starts',
+      pendingLabel: 'Paused draft',
+      pendingValue: 'sends at {when}',
+      pendingCancel: 'Cancel pause',
     };
 
     /* ==================== 二、时间判定 ==================== */
@@ -495,6 +518,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 把时间戳格式化成「HH:MM」，用在"已暂停待发送，14:00 自动发送"这类文案里。
+     * 只给同一天用；跨天时设置页那一行会带上日期（由调用方决定怎么拼）。
+     * @param {number} timestamp 毫秒时间戳
+     * @returns {string} 例如 14:00
+     */
+    function formatClock(timestamp) {
+      // 只取时分：暂停最长也就等到下一个谷时开始，不会跨到第二天以外的场景
+      const date = new Date(timestamp);
+      return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+    }
+
+    /**
      * 把数值夹在闭区间 [low, high] 内。
      * 设置项一律经过它：用户能输入任何数字，落库前必须收敛到合法范围。
      * @param {number} value 原值
@@ -602,6 +637,8 @@ window.__ModuleLoader__.load({
       lastReminderAt: 0,  // 上一次「谷时提醒」弹出的时刻，重复提醒的计时基准
       now: Date.now(),
       holi: holidayInfo,  // 与 holidayInfo 指向同一对象；刷新时整块替换，不原地改
+      defer: loadDefer(), // 暂停待发的草稿 { sessionId, text, atMs, savedAt }，null 表示没有
+      deferNoticeAt: 0,   // 上次因"会话不匹配"提示的时刻，防止每 5 秒重复弹
     };
 
     // 订阅者集合：卡片组件挂载时加入、卸载时移除；用 Set 保证同一个组件不会重复登记。
@@ -734,6 +771,138 @@ window.__ModuleLoader__.load({
       setState({ dialog: null, pending: null, now: Date.now() });
     }
 
+    /* ==================== 五之二、暂停到谷时自动发送 ==================== */
+    // 设计要点：
+    // 1. 只存纯文本，不存 DOM；附件在输入卡里本来就还在，不需要搬（自动发送前会重新读一次草稿）。
+    // 2. 到点不等于能发：会话可能被切走、回合可能正在跑，所以真正发送前要再过一遍条件。
+    // 3. 发送动作走宿主自己的 InputActions（setDraft + submit），等同于用户手动发出。
+
+    /**
+     * 读取上次暂停、尚未发送的草稿。
+     * 解析失败一律当作没有：宁可不发，也不能拿坏数据去填输入框。
+     * @returns {{sessionId:string,text:string,atMs:number,savedAt:number}|null} 待发条目
+     */
+    function loadDefer() {
+      try {
+        const raw = window.localStorage.getItem(DEFER_KEY);
+        if (!raw) return null;
+        const value = JSON.parse(raw);
+        if (!value || typeof value.text !== 'string' || !value.text.trim()) return null;
+        if (!value.atMs || !isFinite(value.atMs)) return null;
+        return {
+          sessionId: String(value.sessionId || ''),
+          text: value.text,
+          atMs: Number(value.atMs),
+          savedAt: Number(value.savedAt) || 0,
+        };
+      } catch (error) {
+        return null;
+      }
+    }
+
+    /**
+     * 把待发条目写进 localStorage，失败只影响"刷新后还在不在"，不影响本次自动发送。
+     * @param {object} entry 待发条目
+     */
+    function saveDefer(entry) {
+      try {
+        if (entry) window.localStorage.setItem(DEFER_KEY, JSON.stringify(entry));
+        else window.localStorage.removeItem(DEFER_KEY);
+      } catch (error) {
+        // 隐私模式下存不下：本次会话内仍然会发，只是刷新后丢失
+      }
+    }
+
+    /**
+     * 「暂停，谷时自动恢复执行」：把当前草稿存下来，到谷时再发。
+     * 先存再关卡片：存失败也要让用户看到卡片消失了吗？——不，存失败就不关卡片，
+     * 让用户改用「返回」自己留着草稿，避免"点了暂停、内容却没了"这种最坏结果。
+     */
+    function deferSend() {
+      const composer = state.composer;
+      const dialog = state.dialog;
+      if (!composer || !dialog || dialog.kind !== 'peak') return;
+      const text = typeof composer.draft === 'string' ? composer.draft : '';
+      // 空草稿（可能只有附件）不支持暂停：直接收起卡片，避免用户误以为内容已存下
+      if (!text.trim()) {
+        // 没有文字（只有附件）时不支持暂停：直接当「返回」，不让用户以为存下了
+        dismissDialog();
+        return;
+      }
+      // 记下会话 id：草稿属于哪个会话，就只能发回哪个会话
+      const entry = {
+        sessionId: String(composer.sessionId || ''),
+        text,
+        atMs: dialog.atMs,
+        savedAt: Date.now(),
+      };
+      // 落盘后才能算"暂停成功"：刷新页面也还在，第二天开机继续等谷时
+      saveDefer(entry);
+      // 卡片上确认一下：避免用户以为"点了暂停但什么都没发生"
+      setState({
+        defer: entry,
+        dialog: { kind: 'deferred', atMs: dialog.atMs, view: 'main', source: 'pause' },
+        pending: null,
+        now: Date.now(),
+      });
+    }
+
+    /**
+     * 取消暂停：清掉待发条目，草稿保持在输入框里（不清空用户的东西）。
+     */
+    /**
+     * 取消暂停：只清待发条目，不动输入框里的草稿。
+     * 用户按了这个多半是想自己再改两笔，把内容一起清掉等于二次伤害。
+     */
+    function cancelDefer() {
+      saveDefer(null);
+      // 只清待发条目，不动输入框里的草稿：用户取消暂停后多半是想自己再改两笔
+      setState({ defer: null, deferNoticeAt: 0, dialog: null, now: Date.now() });
+    }
+
+    /**
+     * 到点检查：该发就发。
+     * 由 tick 每 5 秒调用一次，条件不满足就原地等待（不回退、不丢数据）：
+     * - 还没到点：等；
+     * - 当前会话不是存草稿的那个：提示一次"切回原会话"，继续等；
+     * - 回合正在跑 / 输入卡在投递中：等它空闲；
+     * - 都满足：填回草稿 → 调宿主 submit → 清掉待发条目。
+     */
+    function trySendDeferred(now) {
+      const entry = state.defer;
+      if (!entry || now < entry.atMs) return;
+      const composer = state.composer;
+      const actions = (composer && composer.actions) || {};
+      // 会话对不上就先不发：内容属于原来那个会话，发到当前会话等于串台
+      if (!composer || !composer.sessionId || composer.sessionId !== entry.sessionId) {
+        // 会话切走了：数据留着，等用户回到原会话；只提示一次，不刷屏
+        if (now - state.deferNoticeAt > 60000) {
+          setState({
+            deferNoticeAt: now,
+            dialog: { kind: 'deferred-elsewhere', atMs: now + 8000, view: 'main', source: 'auto' },
+            now,
+          });
+        }
+        return;
+      }
+      // 回合正在跑、或输入卡正在投递：等它空闲，避免和用户刚点下的发送抢同一份草稿
+      if (composer.running || (composer.phase && composer.phase !== 'plain')) return;
+      if (typeof actions.setDraft !== 'function' || typeof composer.submit !== 'function') return;
+
+      // 先写回输入框再提交：这样即使用户正好在看，也能看到"内容回来了、正在发"的完整过程
+      actions.setDraft(entry.text);
+      saveDefer(null);
+      setState({ defer: null, deferNoticeAt: 0, now });
+      // 等一帧让宿主把草稿写进输入框，再提交；200ms 是实测够用的最小余量
+      // 延迟一个短定时再提交：宿主把 setDraft 落到输入框是异步的，同步提交会读到旧草稿
+      window.setTimeout(() => {
+        const current = state.composer;
+        if (current && typeof current.submit === 'function') current.submit('queue');
+      }, 200);
+      // 卡片会自己消失：atMs 已经过去，tick 到点就收（这里给 6 秒阅读时间）
+      setState({ dialog: { kind: 'deferred', atMs: now + 6000, view: 'main', source: 'auto' }, now });
+    }
+
     /**
      * 在主视图与设置视图之间切换。
      * 刻意不做成两个弹窗：设置改完仍停在原来那张卡上，pending 不丢，
@@ -783,6 +952,13 @@ window.__ModuleLoader__.load({
         window.setTimeout(() => {
           if (replayButton === pending.el) replayButton = null;
         }, 0);
+        // 双保险：宿主若改了提交时机（改成 pointerdown 之类），click 重放会落空。
+        // 800ms 后草稿还在，说明没发出去，改用 InputActions 直接投递。
+        window.setTimeout(() => {
+          const composer = state.composer;
+          if (!composer || composer.draftEmpty) return;
+          if (typeof composer.submit === 'function') composer.submit('queue');
+        }, 800);
         return;
       }
       // 兜底（按钮已消失）：走 InputActions.submit，等价于排队发送
@@ -833,12 +1009,49 @@ window.__ModuleLoader__.load({
       return labels;
     }
 
+    // 发送按钮的"词根"：各语言里表示"发送"的词，用于宽松匹配。
+    // 之所以不靠精确字符串：宿主的 aria-label 会带括号补充（如"发送消息（Enter）"）、
+    // 也可能因为语言包版本差异多一个空格，精确相等在实战里太脆。
+    const SEND_WORDS = ['发送', 'send', 'senden', 'enviar', '送信', '전송', 'отправ'];
+
+    /**
+     * 规范化无障碍名称：去掉所有空白/零宽字符、去掉括号里的补充说明、转小写。
+     * @param {string} value 原始 aria-label
+     * @returns {string} 可比较的文本
+     */
+    function normalizeLabelText(value) {
+      return String(value || '')
+        .replace(/[\s\u00a0\u200b\u200c\u200d\ufeff]+/g, '')
+        .replace(/[（(][^（）()]*[)）]/g, '')
+        .toLowerCase();
+    }
+
+    /**
+     * 判断一段无障碍名称是不是"发送"：规范化后包含任一发送词根即可。
+     * @param {string} value aria-label
+     * @returns {boolean} 像不像发送按钮
+     */
+    function looksLikeSend(value) {
+      const text = normalizeLabelText(value);
+      if (!text) return false;
+      return SEND_WORDS.some((word) => text.indexOf(word) >= 0);
+    }
+
+    // 最近一次点击的判定记录：出问题时不靠猜，直接看它为什么没命中
+    // 点击诊断：只保留最后一次判定结果，用户排查"为什么没弹卡"时读它即可
+    const clickTrace = { last: null };
+
     // 命中输入卡内的主发送按钮则返回该按钮，否则返回 null
     /**
      * 从点击目标往上找"输入卡里的主发送按钮"。
      * 判定条件依次是：在 button 上、位于 [data-composer-card] 内、未被禁用、
-     * 不处于发送中（aria-busy / data-sending）、aria-label 命中发送文案。
-     * 语言包不可用时退回结构判定：同一卡片内最后一个按钮就是主按钮（停止键排在它前面）。
+     * 不处于发送中、aria-label 命中发送文案。
+     *
+     * 三个容易踩的坑（都已在实战中核对过）：
+     * 1. `aria-busy={false}` 在 React 里会渲染成 `aria-busy="false"`，属性**始终存在**，
+     *    所以只能用取值判断，不能 `hasAttribute`——否则永远认不到按钮（历史 bug）。
+     * 2. `data-sending` 才是"正在投递"的可靠标记（true 时才渲染，false 时移除）。
+     * 3. aria-label 可能带括号后缀或空格差异，故保留词根宽松匹配与 primary 类名兜底。
      * @param {EventTarget} target 事件目标
      * @returns {HTMLButtonElement|null} 命中的按钮
      */
@@ -848,14 +1061,23 @@ window.__ModuleLoader__.load({
       if (!button) return null;
       const card = button.closest('[data-composer-card]');
       if (!card) return null;
-      // 发送中 / 停止态不是发送按钮：宿主用 aria-busy、data-sending 标记投递过程
       if (button.disabled) return null;
-      if (button.hasAttribute('aria-busy') || button.hasAttribute('data-sending')) return null;
-      const labels = conversationLabels();
+      // 取值判断：只有显式 true 才算"正在发送"
+      if (button.getAttribute('aria-busy') === 'true') return null;
+      if (button.hasAttribute('data-sending')) return null;
+
       const ariaLabel = button.getAttribute('aria-label') || '';
-      if (labels.size > 0) return labels.has(ariaLabel) ? button : null;
-      if (!ariaLabel) return null;   // 无无障碍名称的图标按钮不猜
-      // 兜底：同一卡片内最后一个按钮是主按钮（停止键排在它前面）
+      const labels = conversationLabels();
+      // ① 语言包精确命中（最理想的情况）
+      if (labels.has(ariaLabel)) return button;
+      // ② 语言包存在但文案有差异（括号、空白、大小写）→ 词根匹配
+      if (looksLikeSend(ariaLabel)) return button;
+      // ③ 词根也没中：宿主主按钮带 primary 类名，且有无障碍名称
+      if (ariaLabel && /(^|[\s_-])primary([\s_-]|$)/i.test(String(button.className || ''))) return button;
+      // ④ 语言包可用、以上都不中 → 判定不是主按钮，避免误拦别的图标键
+      if (labels.size > 0) return null;
+      if (!ariaLabel) return null;
+      // ⑤ 语言包完全不可用：结构兜底，卡片内最后一个按钮就是主按钮
       const buttons = card.querySelectorAll('button');
       return buttons[buttons.length - 1] === button ? button : null;
     }
@@ -867,8 +1089,23 @@ window.__ModuleLoader__.load({
      * @param {MouseEvent} event 点击事件
      */
     function onClickCapture(event) {
-      // 先看是不是我们放行的那次重放点击
       const button = findSubmitButton(event.target);
+      // 记录这次点击的判定依据：按钮状态 + 是否命中 + 门禁结果。
+      // 只留最近一次，不累积、不外发，纯粹给排查用。
+      // 用 try 包住：诊断代码不能影响主流程。
+      try {
+        const card = event.target instanceof Element ? event.target.closest('[data-composer-card]') : null;
+        clickTrace.last = {
+          inCard: !!card,
+          hit: !!button,
+          label: button ? button.getAttribute('aria-label') : null,
+          cls: button ? String(button.className).slice(0, 60) : null,
+          at: Date.now(),
+        };
+      } catch (error) {
+        // 忽略诊断异常
+      }
+      // 先看是不是我们放行的那次重放点击
       if (!button) return;
       if (replayButton && replayButton === button) {
         replayButton = null;
@@ -941,6 +1178,11 @@ window.__ModuleLoader__.load({
      */
     function tick() {
       const now = Date.now();
+      // 巡检顺序有讲究：先处理待发，再处理卡片，
+      // 这样"卡片刚被关掉"和"该自动发送"能落在同一轮里，不用等下一个 5 秒。
+      // 暂停到谷时的自动发送：只在"没有卡片挡着"的时候动手，
+      // 用户正在卡上做选择时不去抢方向盘；卡片关掉后的下一轮巡检就会发送。
+      if (!state.dialog) trySendDeferred(now);
       const dialog = state.dialog;
       if (dialog) {
         // 到点换档：卡片上的「还剩多久」已经失效，自动收起
@@ -1017,6 +1259,7 @@ window.__ModuleLoader__.load({
       '.dpg-body{margin-top:2px;font-size:12px;color:rgba(255,255,255,.72);font-variant-numeric:tabular-nums}',
 
       '.dpg-actions{display:flex;align-items:center;gap:8px;margin-top:10px}',
+      '.dpg-actions-pause{margin-top:8px}',
       '.dpg-spacer{flex:1 1 auto}',
 
       '.dpg-btn{appearance:none;border:0;border-radius:8px;padding:5px 12px;font:inherit;',
@@ -1030,6 +1273,11 @@ window.__ModuleLoader__.load({
       /* 继续：红色 */
       '.dpg-btn-danger{background:#e5484d;color:#fff}',
       '.dpg-btn-danger:hover{background:#f0555a}',
+
+      /* 暂停：整行宽的低饱和蓝，和红色「继续」明确区分，位置在两者之上 */
+      '.dpg-btn-pause{flex:1 1 auto;background:rgba(88,140,255,.18);color:#cfe0ff;',
+      'border:1px solid rgba(88,140,255,.35);text-align:center}',
+      '.dpg-btn-pause:hover{background:rgba(88,140,255,.28)}',
 
       /* 设置：纯文字按钮，弱化到不抢「继续/返回」的注意力 */
       '.dpg-btn-ghost{background:transparent;color:rgba(255,255,255,.58);padding-left:2px;padding-right:2px}',
@@ -1133,6 +1381,7 @@ window.__ModuleLoader__.load({
           composer: {
             sessionId: props.sessionId,
             draftEmpty: input.draft.trim() === '' && input.attachmentIds.length === 0,
+            draft: input.draft,                       // 原文，供「暂停到谷时」存档
             phase: input.phase,
             running,
             submit: (mode) => {
@@ -1142,11 +1391,23 @@ window.__ModuleLoader__.load({
                 // 提交失败由宿主自己提示，这里不吞掉用户可见的错误
               }
             },
+            // 自动发送前要把存下的文字写回输入框，再走宿主的提交通道
+            actions: {
+              setDraft: (text) => {
+                try {
+                  actions.setDraft(text);
+                } catch (error) {
+                  // 写不进去就发不出去，trySendDeferred 下一轮会重试
+                }
+              },
+            },
           },
         });
       });
 
       // 运行态由假变真：谷时临近峰时提醒一次
+      // 用 ref 记住上一次的值，是为了把"边沿"和"电平"分开：
+      // 只要 running 一直为真，就只在跳变那一下判一次，不会随每次渲染重复弹卡。
       // 只在 running 由假变真的那个边沿提醒：否则每渲染一次都会判定一遍，
       // 长回合跑起来会变成一直弹卡。
       const runningRef = React.useRef(false);
@@ -1340,6 +1601,25 @@ window.__ModuleLoader__.load({
 
         holidayRow(),
 
+        // 已暂停待发送：只有真的存了一条才出现，并提供「取消暂停」，免得用户忘了这回事。
+        // 这一行同时充当"回执"：用户关掉卡片后仍能从设置里看到内容还没发出去，
+        // 也能在反悔时一键取消，不必等它到点自动发走。时间只显示 HH:MM，
+        // 跨天的情形极少（暂停最多等到下一个谷时开始），为了不撑破一行就不带日期。
+        props.defer
+          ? h('div', { className: 'dpg-col' },
+              h('div', { className: 'dpg-row' },
+                h('span', null, t('pendingLabel')),
+                h('span', { className: 'dpg-field' },
+                  h('span', { className: 'dpg-hint', 'data-testid': 'peak-guard-pending-when' },
+                    t('pendingValue').replace('{when}', formatClock(props.defer.atMs))),
+                  h('button', {
+                    type: 'button',
+                    className: 'dpg-btn dpg-btn-ghost',
+                    'data-testid': 'peak-guard-pending-cancel',
+                    onClick: cancelDefer,
+                  }, t('pendingCancel')))))
+          : null,
+
         h('div', { className: 'dpg-hint' }, t('leadHint')),
         settings.repeatEnabled ? h('div', { className: 'dpg-hint' }, t('repeatHint')) : null);
     }
@@ -1357,7 +1637,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dpg-page-wrap', 'data-peak-guard': 'page' },
         h('h2', { className: 'dpg-page-title' }, t('settingsTitle')),
         h('p', { className: 'dpg-page-desc' }, t('pageDesc')),
-        h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, t, variant: 'page' }),
+        h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, t, variant: 'page' }),
         h('div', { className: 'dpg-page-hint' }, t('ruleText')));
     }
 
@@ -1418,7 +1698,7 @@ window.__ModuleLoader__.load({
           'data-peak-guard': 'settings',
         },
           h('div', { className: 'dpg-title' }, t('settingsTitle')),
-          h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, t }),
+          h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, t }),
           h('div', { className: 'dpg-hint' }, t('ruleText')),
           h('div', { className: 'dpg-actions' },
             h('span', { className: 'dpg-spacer' }),
@@ -1431,15 +1711,23 @@ window.__ModuleLoader__.load({
       }
 
       // 两种卡只差文案与按钮组，共用一个骨架：
+      // 这里先算出标题与正文再统一渲染，避免三处 JSX 各写一遍 replace，
+      // 也让 test-view.mjs 可以只断言文本、不必关心分支结构。
       // 峰时卡给"继续/返回"，谷时提醒只给"知道了"，免得用户在提醒上误触发送。
       const isPeakDialog = dialog.kind === 'peak';
-      const remain = dialog.atMs ? formatRemain(dialog.atMs - snapshot.now) : '';
+      // 暂停后的两种告知卡：已暂停（等谷时自动发）/ 草稿属于别的会话
+      const isDeferNotice = dialog.kind === 'deferred' || dialog.kind === 'deferred-elsewhere';
+      const remain = dialog.atMs ? formatRemain(Math.max(0, dialog.atMs - snapshot.now)) : '';
       const title = isPeakDialog
         ? t('peakTitle')
-        : t('nearTitle').replace('{remain}', remain);
+        : isDeferNotice
+          ? (dialog.kind === 'deferred' ? t('deferredTitle') : t('deferredElsewhereTitle'))
+          : t('nearTitle').replace('{remain}', remain);
       const body = isPeakDialog
         ? t('peakBody').replace('{remain}', remain)
-        : t('nearBody');
+        : isDeferNotice
+          ? (dialog.kind === 'deferred' ? t('deferredBody').replace('{remain}', remain) : t('deferredElsewhereBody'))
+          : t('nearBody');
 
       return h('div', {
         className: 'dpg-card',
@@ -1454,6 +1742,20 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dpg-text' },
             h('div', { className: 'dpg-title' }, title),
             h('div', { className: 'dpg-body' }, body))),
+
+        // 暂停单独占一行：文案长，和返回/继续挤一行会把两个短按钮压扁，
+        // 而且它和「继续」是互斥语义（一个现在发、一个等谷时发），分开摆能降低误点概率。
+        // 颜色用低饱和蓝而不是红/灰：既不是危险动作，也不该像次要操作。
+        isPeakDialog
+          ? h('div', { className: 'dpg-actions dpg-actions-pause' },
+              h('button', {
+                type: 'button',
+                className: 'dpg-btn dpg-btn-pause',
+                'data-testid': 'peak-guard-pause',
+                title: t('pauseHint'),
+                onClick: deferSend,
+              }, t('pauseLabel')))
+          : null,
 
         h('div', { className: 'dpg-actions' },
           h('button', {
@@ -1580,6 +1882,20 @@ window.__ModuleLoader__.load({
         isWorkday,
         refreshHolidays,
         holidayInfo: () => holidayInfo,
+        // 按钮识别与点击诊断：clickTrace 记录最近一次点击为什么命中/没命中
+        findSubmitButton,
+        conversationLabels,
+        looksLikeSend,
+        clickTrace,
+        // 暂停到谷时：单测直接调这三个函数验证"存/发/取消"三条路径
+        deferSend,
+        cancelDefer,
+        trySendDeferred,
+        formatClock,
+        // 单测专用：直接改 store（正常代码走组件上报，不需要它）。
+        // 仅用于 jsdom 之外的无浏览器单测：那里没有槽位、拿不到 useInput，
+        // 又想验证"到点自动发送"的完整链路，于是允许测试直接摆出场景。
+        __test: { setState },
         // 预览入口：手动构造一个假的 atMs 打开卡片，不发消息、不改设置，
         // 用于在非峰时段检查配色与文案，调完直接 Esc 关掉。
         // 预览：不等到真的峰时也能看卡片样式，preview('peak') / preview('near')

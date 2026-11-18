@@ -103,6 +103,15 @@ plugin_manager action=install_bundle target=dsh-peak-window
 - 数据里的 `isOffDay=false` 是**调休补班日**：要上班，但计费口径按**全天谷价**，不算峰时。
 - 关掉设置里的「自动联网更新」后，插件完全不发网络请求。
 
+## 暂停到谷时
+
+峰时确认卡上多了一颗「暂停，谷时自动恢复执行」：把当前输入存下来，等转谷时自动发出。
+
+- 存档键 `dsh-peak-window:pending:v1`，刷新/重启都还在；
+- 发送前三重检查：同一会话、没有回合在跑、输入卡空闲，否则原地等，不丢内容；
+- 切到别的会话会提示一次，切回去自动发；
+- 设置里有「已暂停待发送 … 取消暂停」，随时取消（只清存档，草稿不动）。
+
 ## 自测
 
 ```
@@ -127,7 +136,7 @@ __dshPeakGuardDebug.readState()       // 当前设置与卡片状态
 1. `conversation.input.right` 注册一个空渲染探针，把 `useInput` / `useSession` / `inputActions` 的快照登记到模块级 store；
 2. `shell.overlay` 注册确认卡，并在 `document` 捕获阶段监听 `click` 与 `keydown`；
 3. 命中输入卡内的发送按钮且此刻该拦 → `preventDefault + stopPropagation`，React 的 `onClick` 不执行，发送被冻结在"点下去之前"；
-4. 「继续」把同一个按钮重放一次 `click()`（放行标记跳过自己的监听），投递模式、埋点、焦点都交回宿主；「返回」只关卡片，草稿天然保留；
+4. 「继续」把同一个按钮重放一次 `click()`（放行标记跳过自己的监听），投递模式、埋点、焦点都交回宿主；「返回」只关卡片，草稿天然保留；「暂停」把草稿存进 localStorage，到转谷时写回输入框再走 `inputActions.submit('queue')`；
 5. `settings.section` 注册一页「峰时守卫」，与卡片里的设置面板共用 `SettingsPanel`（`variant='page'` 切换成宿主主题配色），因此不弹卡也能改设置。
 
 ## 链接

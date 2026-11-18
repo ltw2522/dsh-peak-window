@@ -32,5 +32,14 @@
   "holiBuiltin": "Built-in table ({years})",
   "holiUpdated": "Updated {when}",
   "holiFailed": "Update failed, still using local data",
-  "doneLabel": "Done"
+  "doneLabel": "Done",
+  "pauseLabel": "Pause and auto-send off-peak",
+  "pauseHint": "Keeps this draft and sends it once off-peak starts",
+  "deferredTitle": "Paused, will send off-peak",
+  "deferredBody": "Sends your saved draft when off-peak starts (about {remain})",
+  "deferredElsewhereTitle": "Paused draft belongs to another conversation",
+  "deferredElsewhereBody": "Switch back to that conversation; it will be sent when off-peak starts",
+  "pendingLabel": "Paused draft",
+  "pendingValue": "sends at {when}",
+  "pendingCancel": "Cancel pause"
 }

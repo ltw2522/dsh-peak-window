@@ -185,4 +185,66 @@ assert.strictEqual(legacySettings.repeatMin, 60, '旧键里的重复间隔应被
 assert.strictEqual(legacySettings.guardEnter, false, '旧键里的回车拦截开关应被继承');
 assert.ok(legacyStore.has('dsh-peak-window:settings:v1'), '读到旧键时应顺手迁移到新键');
 
-console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移');
+// 按钮名称匹配：宿主文案可能带括号、空格、大小写差异，必须宽松认
+// （历史 bug：曾用 aria-busy 的 hasAttribute 判断，React 会渲染 "false"，导致永远认不到按钮）
+assert.strictEqual(dbg.looksLikeSend('发送消息'), true, '精确文案应识别');
+assert.strictEqual(dbg.looksLikeSend('发送消息（Enter）'), true, '带括号快捷键提示应识别');
+assert.strictEqual(dbg.looksLikeSend('Send message'), true, '英文文案应识别');
+assert.strictEqual(dbg.looksLikeSend(' 发 送 '), true, '带空白应识别');
+assert.strictEqual(dbg.looksLikeSend('停止生成'), false, '停止键不能被当成发送键');
+assert.strictEqual(dbg.looksLikeSend('选择模型，当前 DeepSeek-V4.1-Flash'), false, '模型选择键不能被误认');
+assert.strictEqual(dbg.looksLikeSend(''), false, '空名称不猜');
+
+/* —— 暂停到谷时自动发送 —— */
+let sent = [];
+let draft = '';
+dbg.__test.setState({
+  dialog: { kind: 'peak', atMs: at(11, 18, 12, 0), view: 'main', source: 'test' },
+  composer: {
+    sessionId: 's1',
+    draftEmpty: false,
+    draft: '帮我算一下这个电路',
+    phase: 'plain',
+    running: false,
+    submit: (mode) => { sent.push(mode); },
+    actions: { setDraft: (text) => { draft = text; } },
+  },
+  defer: null,
+});
+dbg.deferSend();
+assert.ok(dbg.readState().defer, '暂停后应存下待发条目');
+assert.strictEqual(dbg.readState().defer.text, '帮我算一下这个电路', '应原样存下草稿');
+assert.strictEqual(dbg.readState().defer.atMs, at(11, 18, 12, 0), '到点应是转谷时的时刻');
+assert.strictEqual(sent.length, 0, '暂停本身不能发送');
+
+// 未到点：什么都不做
+dbg.trySendDeferred(at(11, 18, 11, 59));
+assert.strictEqual(sent.length, 0, '未到点不许发送');
+assert.ok(dbg.readState().defer, '未到点应继续保留待发条目');
+
+// 到点且会话匹配：写回草稿后提交
+dbg.trySendDeferred(at(11, 18, 12, 0));
+assert.strictEqual(draft, '帮我算一下这个电路', '应把存下的草稿写回输入框');
+assert.strictEqual(dbg.readState().defer, null, '发出后应清掉待发条目');
+await new Promise((resolve) => setTimeout(resolve, 250));
+assert.deepStrictEqual(sent, ['queue'], '应通过宿主的 submit 排队发送一次');
+
+// 会话不匹配：不发，只提示
+sent = [];
+dbg.__test.setState({
+  composer: { sessionId: 's2', draftEmpty: true, draft: '', phase: 'plain', running: false, submit: (m) => sent.push(m), actions: { setDraft: () => {} } },
+  defer: { sessionId: 's1', text: '别的会话的内容', atMs: at(11, 18, 12, 0), savedAt: 0 },
+  deferNoticeAt: 0,
+});
+dbg.trySendDeferred(at(11, 18, 13, 0));
+assert.strictEqual(sent.length, 0, '会话不匹配时不许往当前会话乱发');
+assert.strictEqual(dbg.readState().dialog.kind, 'deferred-elsewhere', '应提示切回原会话');
+
+// 取消暂停
+dbg.cancelDefer();
+assert.strictEqual(dbg.readState().defer, null, '取消后应清空待发条目');
+
+// 时钟格式化
+assert.strictEqual(dbg.formatClock(at(11, 18, 14, 5)), '14:05', '时间格式应为 HH:MM');
+
+console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发');
