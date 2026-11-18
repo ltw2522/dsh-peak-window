@@ -61,7 +61,7 @@ plugin_manager action=install_bundle target=<拷贝后的绝对路径，如 D:\t
 
 **② 单个 tgz（一个文件，最省事）**
 
-本目录下的 `dsh-peak-window-1.2.0.tgz` 就是打包产物（`pnpm pack` 重新生成）。对方：
+本目录下的 `dsh-peak-window-1.2.1.tgz` 就是打包产物（`pnpm pack` 重新生成）。对方：
 
 ```
 plugin_manager action=install_bundle target=<tgz 的绝对路径>

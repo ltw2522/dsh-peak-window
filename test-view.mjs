@@ -194,5 +194,10 @@ const dispose = mod.apply({
   },
 });
 assert.ok(head.children.some((node) => node.attrs['data-plugin-css'] === 'dsh-peak-window'), '应注入插件样式');
+// 浅色设置页里的"关"态开关必须有自己的配色，否则白底白块等于没渲染（曾把调试开关藏没了）
+const cssNode = head.children.find((node) => node.attrs['data-plugin-css'] === 'dsh-peak-window');
+const cssText = JSON.stringify(cssNode);
+assert.ok(cssText.includes('.dpg-page .dpg-switch'), '缺少设置页开关的关态配色');
+assert.ok(cssText.includes('aria-checked=\"true\"') || cssText.includes('aria-checked'), '开关仍应按 aria-checked 切换配色');
 
 console.log('界面结构断言通过：峰时卡 / 谷时提醒 / 设置面板 / 空态 / 样式注入');

@@ -1424,6 +1424,14 @@ window.__ModuleLoader__.load({
       '.dpg-knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;',
       'background:#fff;transition:transform .15s ease}',
       '.dpg-switch[aria-checked="true"] .dpg-knob{transform:translateX(14px)}',
+      // 浅色页（设置页）里的「关」态：卡片用的半透明白在白底上等于隐形，
+      // 这里改成主题底色 + 描边，保证默认关闭的开关（例如调试模式）一眼能找到。
+      // 这三条只作用于设置页，卡片里那套深色配色一个字都不动
+      '.dpg-page .dpg-switch{background:var(--dsw-alias-bg-layer-2);',
+      'box-shadow:inset 0 0 0 1px var(--dsw-alias-border-l2)}',
+      '.dpg-page .dpg-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary);box-shadow:none}',
+      '.dpg-page .dpg-knob{box-shadow:0 1px 2px rgba(0,0,0,.18)}',
+      '.dpg-page .dpg-switch[aria-checked="false"] .dpg-knob{background:var(--dsw-alias-label-secondary)}',
 
       '.dpg-hint{margin-top:8px;font-size:11px;line-height:1.6;color:rgba(255,255,255,.5)}',
       // 放假数据那块是"一行状态 + 若干行说明"，用列容器把它们叠起来
