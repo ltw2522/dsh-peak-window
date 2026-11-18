@@ -1,7 +1,7 @@
 @echo off
 cd /d D:\dsh_workspace\dsh-peak-window
 echo ==================================================
-echo  Publish dsh-peak-window 1.2.3 to npm
+echo  Publish dsh-peak-window 1.2.4 to npm
 echo  1) Press ENTER to open the authorization page
 echo  2) Click Authorize, confirm with Windows Hello
 echo ==================================================

@@ -108,6 +108,16 @@ assert.ok(text.includes('0h45m'), `提醒应显示剩余时长：${text}`);
 assert.strictEqual(view.buttons.filter((b) => b.text === '知道了').length, 1, '应只有一个「知道了」');
 assert.ok(view.buttons.some((b) => b.text === '知道了' && b.className.includes('dpg-btn-neutral')), '知道了应为浅灰');
 assert.ok(!view.buttons.some((b) => b.text === '继续'), '谷时提醒不应出现继续按钮');
+// 「本次不再提醒」：只在重复提醒开着的时候出现（关着的时候点了也没意义）
+dbg.patchSettings({ repeatEnabled: true });
+view = render({ t });
+assert.ok(view.buttons.some((b) => b.text === '本次不再提醒' && b.testId === 'peak-guard-mute'),
+  '谷时提醒卡应有「本次不再提醒」');
+dbg.patchSettings({ repeatEnabled: false });
+view = render({ t });
+assert.ok(!view.buttons.some((b) => b.testId === 'peak-guard-mute'),
+  '重复提醒已关时不该再显示「本次不再提醒」');
+dbg.patchSettings({ repeatEnabled: true });
 
 /* —— 场景三：设置面板 —— */
 dbg.toggleSettingsView();

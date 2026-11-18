@@ -178,6 +178,9 @@ window.__ModuleLoader__.load({
       continueLabel: '继续',
       backLabel: '返回',
       okLabel: '知道了',
+      muteLabel: '本次不再提醒',
+      muteHint: '关掉「重复提醒」，进入峰时后自动恢复',
+      muteRestoreHint: '重复提醒已暂停，{when} 进入峰时后自动恢复',
       settingsLabel: '设置',
       settingsTitle: '峰时守卫设置',
       pageDesc: '发送前自动判定峰时与谷时：峰时先确认再发，谷时临近峰时提醒一次。下面这些设置对所有会话立即生效。',
@@ -234,6 +237,9 @@ window.__ModuleLoader__.load({
       continueLabel: 'Send anyway',
       backLabel: 'Back',
       okLabel: 'Got it',
+      muteLabel: "Don't remind again",
+      muteHint: 'Turns off repeat reminders, restored automatically when peak starts',
+      muteRestoreHint: 'Repeat reminders paused; will be restored automatically at {when}',
       settingsLabel: 'Settings',
       settingsTitle: 'Peak guard settings',
       pageDesc: 'Peak and off-peak are checked before every send: during peak you confirm first, and just before a peak window starts you get one reminder. Changes below apply to all conversations immediately.',
@@ -281,7 +287,7 @@ window.__ModuleLoader__.load({
 
     // 版本号由 build 时手工同步 package.json；调试出口会把它带出来，
     // 用来确认"浏览器里跑的到底是哪一版"（改完 CSS 没生效时尤其有用）。
-    const PLUGIN_VERSION = '1.2.3';
+    const PLUGIN_VERSION = '1.2.4';
 
     /* ==================== 二、时间判定 ==================== */
     // 全部是纯函数：输入时间戳，输出布尔值或时刻，不读全局状态，方便单测直接调。
@@ -581,6 +587,10 @@ window.__ModuleLoader__.load({
     const DEFAULT_SETTINGS = {
       leadMin: 120,            // 谷时提醒提前量：默认 2 小时
       repeatEnabled: true,     // 是否重复提醒
+      // 「本次不再提醒」用：等到这个时刻（下次进峰时的瞬间）自动把上面那个开关打开。
+      // 存两个字段而不是一个"是否静音"布尔值，是因为恢复时必须知道用户原本就是开的还是关的。
+      repeatMutedUntil: 0,
+      repeatMutedPrev: true,
       repeatMin: 15,           // 重复间隔：默认 15 分钟
       remindWhileRunning: true,// 对话运行时是否也提醒
       guardEnter: true,        // 回车发送是否同样拦截
@@ -608,6 +618,12 @@ window.__ModuleLoader__.load({
         repeatMin,
         repeatMs: repeatMin * MIN_MS,
         repeatEnabled: base.repeatEnabled !== false,
+        // 静音截止时刻：只认有限数字，其它一律当"没有静音"（0）
+        repeatMutedUntil: Number.isFinite(Number(base.repeatMutedUntil)) && Number(base.repeatMutedUntil) > 0
+          ? Number(base.repeatMutedUntil)
+          : 0,
+        // 静音前那个开关是不是开着的：恢复时要照原样还回去
+        repeatMutedPrev: base.repeatMutedPrev !== false,
         remindWhileRunning: base.remindWhileRunning !== false,
         guardEnter: base.guardEnter !== false,
         // 默认开启：每年自动取放假安排是本插件的核心卖点，关掉只是给"完全不想联网"的人留个口子
@@ -645,6 +661,8 @@ window.__ModuleLoader__.load({
           leadMin: settings.leadMin,
           repeatMin: settings.repeatMin,
           repeatEnabled: settings.repeatEnabled,
+          repeatMutedUntil: settings.repeatMutedUntil,
+          repeatMutedPrev: settings.repeatMutedPrev,
           remindWhileRunning: settings.remindWhileRunning,
           guardEnter: settings.guardEnter,
           autoHoliday: settings.autoHoliday,
@@ -1095,7 +1113,14 @@ window.__ModuleLoader__.load({
      * @param {object} patch 只包含要改的字段
      */
     function patchSettings(patch) {
-      const next = normalizeSettings(Object.assign({}, state.settings, patch));
+      const merged = Object.assign({}, state.settings, patch);
+      // 用户自己把「重复提醒」拨回打开（不是静音流程内部改的）时，顺手清掉静音标记，
+      // 否则到了下个峰时它还会"自动打开"一次，等于白按了一下。
+      if (patch.repeatEnabled === true && patch.repeatMutedUntil === undefined) {
+        merged.repeatMutedUntil = 0;
+        merged.repeatMutedPrev = true;
+      }
+      const next = normalizeSettings(merged);
       const wasAuto = state.settings.autoHoliday;   // 必须在 setState 之前取旧值
       saveSettings(next);
       setState({ settings: next });
@@ -1103,6 +1128,43 @@ window.__ModuleLoader__.load({
       if (next.autoHoliday && !wasAuto) {
         refreshHolidays(true).catch(() => {});
       }
+    }
+
+    /**
+     * 「本次不再提醒」的到期检查：到了静音截止时刻就把重复提醒恢复成原状。
+     * 单独抽出来是为了能脱离定时器单测（tick 里第一件事就是调它）。
+     * @param {number} now 当前时间（毫秒）
+     * @returns {boolean} 是否刚刚发生了恢复
+     */
+    // 这里刻意不改 lastReminderAt：恢复后要不要立刻再提醒一次，
+    // 交给下一轮 tick 按"距上次提醒多久"自己判断，避免恢复瞬间又弹一张卡。
+    function maybeRestoreRepeat(now) {
+      const settings = state.settings;
+      if (!(settings.repeatMutedUntil > 0) || now < settings.repeatMutedUntil) return false;
+      patchSettings({ repeatEnabled: settings.repeatMutedPrev, repeatMutedUntil: 0 });
+      return true;
+    }
+
+    /**
+     * 卡片上的「本次不再提醒」：关掉重复提醒，并记下"到下次进峰时就恢复"的截止时刻。
+     * 只影响重复提醒，不影响首次提醒（下一次临近峰时该弹还是弹）。
+     */
+    // 只记截止时刻、不改别的设置：附件、草稿、提前量都不碰。
+    // 如果用户本来就是关着重复提醒的，这里只会写截止时刻，不会把开关状态改乱。
+    function muteRepeat() {
+      const dialog = state.dialog;
+      if (!dialog) return;
+      // 已经是关着的就没什么可关的，只记截止时刻，别把用户的设置改乱
+      if (state.settings.repeatEnabled) {
+        patchSettings({
+          repeatEnabled: false,
+          repeatMutedUntil: dialog.atMs || nowMs(),
+          repeatMutedPrev: true,
+        });
+      } else {
+        patchSettings({ repeatMutedUntil: dialog.atMs || nowMs() });
+      }
+      dismissDialog();
     }
 
     /* ==================== 六、按钮识别与事件拦截 ==================== */
@@ -1299,6 +1361,8 @@ window.__ModuleLoader__.load({
      * 以及在"首次提醒之后"按设定的间隔重复提醒。
      * 重复提醒只在谷时临近峰时之间发生，进入峰时就停。
      */
+    // 巡检不依赖任何组件挂载：只要有回合在跑或页面开着就一直转，
+    // 所以静音恢复、待发补发、重复提醒三件事都放在这里，而不是散在各个组件里。
     function tick() {
       const now = nowMs();
       // 巡检顺序有讲究：先处理待发，再处理卡片，
@@ -1317,8 +1381,10 @@ window.__ModuleLoader__.load({
         if (dialog.view === 'main') setState({ now });
         return;
       }
-      // 重复提醒：只在「已经弹过首次谷时提醒之后」才计时
       const settings = state.settings;
+      // 静音到点了说明已经进入峰时：把「重复提醒」按静音前的状态还回去
+      if (maybeRestoreRepeat(now)) return;
+      // 重复提醒：只在「已经弹过首次谷时提醒之后」才计时
       if (!settings.repeatEnabled || state.lastReminderAt <= 0) return;
       if (effectiveTier(now) === 'peak') return;
       const next = nextSwitch(now);
@@ -1364,7 +1430,8 @@ window.__ModuleLoader__.load({
     // 配色只借用宿主的两类 token（品牌色、语义色），其余用固定值：
     // 深色胶囊按用户提供的效果图取 #2b2b2b 底 + 白字，宿主主题里没有对应的 tooltip 变量。
     const CSS = [
-      /* 卡片本体：仿输入框旁的原生悬浮提示（深色圆角胶囊），浮在输入卡上方 */
+      /* 卡片本体：仿输入框旁的原生悬浮提示（深色圆角胶囊），浮在输入卡上方。
+         之所以 fixed 而不是 absolute：宿主的输入卡会裁剪溢出内容。 */
       '.dpg-card{position:fixed;right:20px;bottom:108px;z-index:20;box-sizing:border-box;',
       'width:min(304px,calc(100vw - 32px));padding:12px 14px;border-radius:12px;',
       'background:#2b2b2b;color:#f5f5f5;border:1px solid rgba(255,255,255,.09);',
@@ -1435,7 +1502,8 @@ window.__ModuleLoader__.load({
       // 直接取宿主开关的实测值（蓝 #5d8bfd / 灰 #e7e7e8），跨主题也不会跑偏。
       '.dpg-page .dpg-switch{background:#e7e7e8;box-shadow:inset 0 0 0 1px #cfcfd0}',
       '.dpg-page .dpg-switch[aria-checked="true"]{background:#5d8bfd;box-shadow:none}',
-      // 旋钮在两种状态下都保持白色：和宿主自己的开关一致，关态靠浅灰轨道区分
+      // 旋钮在两种状态下都保持白色：和宿主自己的开关一致，关态靠浅灰轨道区分。
+      // 阴影很淡：宿主开关也有，但没有它旋钮会"糊"在浅灰轨道上。
       '.dpg-page .dpg-knob{background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.16)}',
 
       // 被开关关掉的那一行：整体降不透明度 + 输入框指向 not-allowed，
@@ -1788,6 +1856,15 @@ window.__ModuleLoader__.load({
           patchSettings({ repeatEnabled: !settings.repeatEnabled });
         }, 'peak-guard-repeat-switch'),
 
+        // 静音期间补一句"为什么它是关着的"：否则用户只会看到开关自己变了，
+        // 以为是 bug；这里同时给出"什么时候会自动开回来"。
+        settings.repeatMutedUntil > 0
+          ? h('div', {
+              className: 'dpg-hint',
+              'data-testid': 'peak-guard-mute-hint',
+            }, t('muteRestoreHint').replace('{when}', formatClock(settings.repeatMutedUntil)))
+          : null,
+
         // 重复间隔常驻显示：关掉「重复提醒」时只置灰不可编辑，
         // 不让整行消失——否则页面高度跳一下，用户还会以为设置丢了、值也被重置。
         h('div', {
@@ -1934,7 +2011,9 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dpg-title' }, t('settingsTitle')),
           h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, now: snapshot.now, t }),
           h('div', { className: 'dpg-hint' }, t('ruleText')),
-          h('div', { className: 'dpg-actions' },
+          // 底部按钮区：左边是进设置（文字按钮），右边按卡片类型给动作。
+        // 峰时卡给「返回 + 继续」，谷时卡给「知道了」，两种都保持右边对齐。
+        h('div', { className: 'dpg-actions' },
             h('span', { className: 'dpg-spacer' }),
             h('button', {
               type: 'button',
@@ -1999,6 +2078,17 @@ window.__ModuleLoader__.load({
             onClick: toggleSettingsView,
           }, t('settingsLabel')),
           h('span', { className: 'dpg-spacer' }),
+          // 谷时提醒卡：给一个"本次先别烦我"的出口，作用是把设置里的重复提醒关掉，
+          // 进入峰时后由 tick() 自动恢复。重复提醒本来就是关着的时候不显示，免得点了没反馈。
+          !isPeakDialog && !isDeferNotice && snapshot.settings.repeatEnabled
+            ? h('button', {
+                type: 'button',
+                className: 'dpg-btn dpg-btn-ghost',
+                'data-testid': 'peak-guard-mute',
+                title: t('muteHint'),
+                onClick: muteRepeat,
+              }, t('muteLabel'))
+            : null,
           isPeakDialog
             ? h('button', {
                 type: 'button',
@@ -2118,6 +2208,9 @@ window.__ModuleLoader__.load({
         normalizeSettings,
         openDialog,
         dismissDialog,
+        muteRepeat,
+        maybeRestoreRepeat,
+        tick,
         toggleSettingsView,
         patchSettings,
         // 放假数据相关：单测用 isWorkday 覆盖调休，用 refreshHolidays 走一遍网络路径

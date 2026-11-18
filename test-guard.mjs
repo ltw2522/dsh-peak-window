@@ -279,4 +279,31 @@ dbg.resetClock();
 assert.strictEqual(dbg.debugOffset(), 0, '复位后偏移应归零');
 dbg.patchSettings({ debugMode: false, forceTier: 'auto' });
 
-console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发 / 调试模式');
+/* —— 本次不再提醒：关重复提醒，进峰时自动恢复 —— */
+dbg.patchSettings({ repeatEnabled: true, repeatMutedUntil: 0 });
+dbg.__test.setState({
+  dialog: { kind: 'near', atMs: at(11, 18, 14, 0), view: 'main', source: 'test' },
+  lastReminderAt: at(11, 18, 13, 0),
+});
+dbg.muteRepeat();
+assert.strictEqual(dbg.readState().settings.repeatEnabled, false, '点「本次不再提醒」应关掉重复提醒');
+assert.strictEqual(dbg.readState().settings.repeatMutedUntil, at(11, 18, 14, 0), '静音截止时刻应是进峰时的那一刻');
+assert.strictEqual(dbg.readState().dialog, null, '点完应立即收起卡片');
+
+// 还没到峰时：不该自动恢复
+assert.strictEqual(dbg.maybeRestoreRepeat(at(11, 18, 13, 59)), false, '没到点不许恢复');
+assert.strictEqual(dbg.readState().settings.repeatEnabled, false, '没到点应保持关闭');
+
+// 到点（进峰时）：自动恢复成打开
+assert.strictEqual(dbg.maybeRestoreRepeat(at(11, 18, 14, 0)), true, '到点应恢复');
+assert.strictEqual(dbg.readState().settings.repeatEnabled, true, '进峰时后重复提醒应自动打开');
+assert.strictEqual(dbg.readState().settings.repeatMutedUntil, 0, '恢复后应清掉静音标记');
+
+// 用户自己又把开关拨回来：清标记，避免下个峰时"自动打开"一次
+dbg.__test.setState({ dialog: { kind: 'near', atMs: at(11, 18, 14, 0), view: 'main', source: 'test' } });
+dbg.muteRepeat();
+assert.strictEqual(dbg.readState().settings.repeatEnabled, false, '再次静音应关掉开关');
+dbg.patchSettings({ repeatEnabled: true });
+assert.strictEqual(dbg.readState().settings.repeatMutedUntil, 0, '手动打开应清掉静音标记');
+
+console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发 / 调试模式 / 本次不再提醒');
