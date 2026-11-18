@@ -61,7 +61,7 @@ plugin_manager action=install_bundle target=<拷贝后的绝对路径，如 D:\t
 
 **② 单个 tgz（一个文件，最省事）**
 
-本目录下的 `dsh-peak-window-1.2.4.tgz` 就是打包产物（`pnpm pack` 重新生成）。对方：
+本目录下的 `dsh-peak-window-1.2.5.tgz` 就是打包产物（`pnpm pack` 重新生成）。对方：
 
 ```
 plugin_manager action=install_bundle target=<tgz 的绝对路径>
@@ -114,12 +114,13 @@ plugin_manager action=install_bundle target=dsh-peak-window
 
 ## 本次不再提醒
 
-谷时告知卡上的第二个出口：点一下就把「重复提醒」关掉，**进入峰时后自动打开**。
+谷时告知卡上的第二个出口：点一下之后，**本次谷时内提醒卡一律不再弹出，直到进入峰时**。
 
 - 状态存 `repeatMutedUntil`（恢复时刻）与 `repeatMutedPrev`（原本开还是关），刷新/重启不丢；
-- 只压重复提醒，首次提醒照旧；
+- 静音期内再次点发送、按回车、会话转入运行，都**不会再弹卡**（消息照常发出）；
+- 静音只由「进入峰时」自动恢复，或你手动把「重复提醒」开关拨开时解除；
 - 「重复提醒」本来就关着时，这颗按钮不显示；
-- 设置里会多一行「重复提醒已暂停，HH:MM 进入峰时后自动恢复」；
+- 设置里会多一行「本次不再提醒：HH:MM 进入峰时前不再弹出提醒卡」；
 - 你手动把开关拨回来时标记会被清掉，不会在下个峰时又"自动打开"一次。
 
 ## 自测

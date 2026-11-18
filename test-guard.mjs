@@ -306,4 +306,35 @@ assert.strictEqual(dbg.readState().settings.repeatEnabled, false, '再次静音�
 dbg.patchSettings({ repeatEnabled: true });
 assert.strictEqual(dbg.readState().settings.repeatMutedUntil, 0, '手动打开应清掉静音标记');
 
+/* —— 本次不再提醒的完整语义：静音期内再发消息 / 转入运行都不许弹卡 —— */
+// 2026-11-18 是周三：18:00 进峰时，13:30 已落进默认 2 小时提前量窗口
+const muteUntil = at(11, 18, 14, 0);            // 用 14:00（下午峰时）作恢复点更好算窗口
+dbg.patchSettings({ debugMode: false, forceTier: 'auto', repeatEnabled: true, repeatMutedUntil: muteUntil, repeatMutedPrev: true });
+assert.strictEqual(dbg.isMuted(at(11, 18, 13, 30)), true, '进峰时之前应处于静音期');
+assert.strictEqual(dbg.isMuted(at(11, 18, 14, 0)), false, '进峰时那一刻静音应解除');
+assert.strictEqual(dbg.isMuted(at(11, 18, 14, 30)), false, '进峰时之后不再是静音期');
+
+// 静音期内：哪怕已经进提前量窗口，点发送 / 按回车也不再返回谷时卡
+assert.strictEqual(dbg.gateAt(at(11, 18, 13, 30)), null, '静音期内距峰时 30 分钟也不再弹谷时卡');
+// 解除静音后：同一时刻应恢复提醒，证明上面只是"静音否决"、不是窗口算错了
+dbg.patchSettings({ repeatMutedUntil: 0 });
+const nearAfterMute = dbg.gateAt(at(11, 18, 13, 30));
+assert.strictEqual(nearAfterMute && nearAfterMute.kind, 'near', '解除静音后应恢复谷时提醒');
+
+// 静音期内：会话转入运行也不弹卡（remindWhileRunning 必须走同一把 isMuted 尺子）
+dbg.patchSettings({ repeatMutedUntil: muteUntil, remindWhileRunning: true });
+dbg.__test.setState({ dialog: null, lastReminderAt: 0 });
+dbg.remindWhileRunning(at(11, 18, 13, 30));
+assert.strictEqual(dbg.readState().dialog, null, '静音期内会话转入运行不许弹卡');
+// 解除静音后：同一时刻恢复运行态提醒
+dbg.patchSettings({ repeatMutedUntil: 0 });
+dbg.remindWhileRunning(at(11, 18, 13, 30));
+assert.strictEqual(dbg.readState().dialog && dbg.readState().dialog.kind, 'near', '解除静音后运行态应恢复提醒');
+
+// 峰时确认卡不受静音影响（静音只针对谷时提醒；万一静音标记残留，峰时仍要拦）
+dbg.patchSettings({ repeatMutedUntil: muteUntil });
+dbg.__test.setState({ dialog: null });
+assert.strictEqual(dbg.gateAt(at(11, 18, 15, 0)).kind, 'peak', '峰时确认卡不受静音影响');
+dbg.patchSettings({ repeatMutedUntil: 0 });
+
 console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发 / 调试模式 / 本次不再提醒');

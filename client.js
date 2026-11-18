@@ -287,7 +287,7 @@ window.__ModuleLoader__.load({
 
     // 版本号由 build 时手工同步 package.json；调试出口会把它带出来，
     // 用来确认"浏览器里跑的到底是哪一版"（改完 CSS 没生效时尤其有用）。
-    const PLUGIN_VERSION = '1.2.4';
+    const PLUGIN_VERSION = '1.2.5';
 
     /* ==================== 二、时间判定 ==================== */
     // 全部是纯函数：输入时间戳，输出布尔值或时刻，不读全局状态，方便单测直接调。
@@ -871,6 +871,10 @@ window.__ModuleLoader__.load({
       if (!next || next.entering !== true) return null; // 谷时但下一跳不是峰时（如长周末）
       const remain = next.atMs - now;
       if (remain <= 0 || remain > state.settings.leadMs) return null;
+      // 本次不再提醒：静音期内即使已经落进提前量窗口，点击发送 / 按回车也不再弹谷时卡。
+      // 放在最后判断而不是最前面：上面的提前量窗口仍决定"这次本来该不该提醒"，
+      // 静音只否决「该提醒但用户已明确说别弹」的那一段，不影响峰时确认卡（峰时卡在上面就返回了）。
+      if (isMuted(now)) return null;
       return { kind: 'near', atMs: next.atMs };
     }
 
@@ -1131,6 +1135,20 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 静音判据：当前时刻是否还在「本次不再提醒」的有效期内。
+     * 截止时刻 repeatMutedUntil 记录的是"下次进入峰时"的绝对毫秒：
+     * 只要 now 还在它之前，整段谷时（含提前量窗口）都属于静音期。
+     * 单独抽成函数，是为了让 gateAt / remindWhileRunning / tick 三处用同一把尺子，
+     * 避免某条路径漏判、出现"点了不再提醒，再发消息又弹卡"。
+     * @param {number} now 当前时间（毫秒）
+     * @returns {boolean} true=静音中，谷时提醒一律不弹
+     */
+    function isMuted(now) {
+      const until = state.settings && Number(state.settings.repeatMutedUntil);
+      return Number.isFinite(until) && until > 0 && now < until;
+    }
+
+    /**
      * 「本次不再提醒」的到期检查：到了静音截止时刻就把重复提醒恢复成原状。
      * 单独抽出来是为了能脱离定时器单测（tick 里第一件事就是调它）。
      * @param {number} now 当前时间（毫秒）
@@ -1146,8 +1164,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 卡片上的「本次不再提醒」：关掉重复提醒，并记下"到下次进峰时就恢复"的截止时刻。
-     * 只影响重复提醒，不影响首次提醒（下一次临近峰时该弹还是弹）。
+     * 卡片上的「本次不再提醒」：整段谷时静音，到进入峰时的那一刻自动恢复。
+     * 语义（用户约定）：点下去之后，直到本次谷时转为峰时之前，提醒卡一律不再弹出——
+     * 无论是重复提醒到点、再次点发送/按回车，还是会话转入运行。
+     * 实现上关掉「重复提醒」并记下截止时刻；真正的兜底否决由 isMuted 在各弹卡入口完成，
+     * 因此即使「重复提醒」原本就是关的（repeatMutedPrev=false），静音仍然生效。
      */
     // 只记截止时刻、不改别的设置：附件、草稿、提前量都不碰。
     // 如果用户本来就是关着重复提醒的，这里只会写截止时刻，不会把开关状态改乱。
@@ -1386,6 +1407,9 @@ window.__ModuleLoader__.load({
       if (maybeRestoreRepeat(now)) return;
       // 重复提醒：只在「已经弹过首次谷时提醒之后」才计时
       if (!settings.repeatEnabled || state.lastReminderAt <= 0) return;
+      // 本次不再提醒：静音期内连重复提醒也不许弹（正常情况下 repeatEnabled 已被关掉，
+      // 这里再判一次 isMuted，防止有人手动改存储把开关拨回来却留着静音标记）
+      if (isMuted(now)) return;
       if (effectiveTier(now) === 'peak') return;
       const next = nextSwitch(now);
       if (!next || next.entering !== true) return;
@@ -1404,11 +1428,14 @@ window.__ModuleLoader__.load({
      * 会话从空闲转入运行的那一刻，若正处在"谷时临近峰时"的窗口内，提醒一次。
      * 这是需求里"对话正在运行时也要提醒"的落点：只弹卡、不暂停、不抢焦点，
      * 正在跑的回合完全不受影响。
+     * @param {number} [nowArg] 仅供单测：显式指定判定时刻；正常调用不传，取 nowMs()
      */
-    function remindWhileRunning() {
+    function remindWhileRunning(nowArg) {
       if (!state.settings.remindWhileRunning) return;
       if (state.dialog) return;
-      const now = nowMs();
+      const now = typeof nowArg === 'number' ? nowArg : nowMs();
+      // 本次不再提醒：静音期内会话转入运行也不再弹卡（用户说的是"不管是否再次发送消息"）
+      if (isMuted(now)) return;
       if (effectiveTier(now) === 'peak') return;
       const next = nextSwitch(now);
       if (!next || next.entering !== true) return;
@@ -2210,6 +2237,9 @@ window.__ModuleLoader__.load({
         dismissDialog,
         muteRepeat,
         maybeRestoreRepeat,
+        // 静音判据与运行态提醒：单测直接验证"静音期内点发送/转入运行都不弹卡"
+        isMuted,
+        remindWhileRunning,
         tick,
         toggleSettingsView,
         patchSettings,
