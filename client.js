@@ -962,7 +962,7 @@ window.__ModuleLoader__.load({
         defer: entry,
         dialog: { kind: 'deferred', atMs: dialog.atMs, view: 'main', source: 'pause' },
         pending: null,
-        now: Date.now(),
+        now: nowMs(),
       });
     }
 
