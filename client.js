@@ -209,6 +209,19 @@ window.__ModuleLoader__.load({
       pendingLabel: '已暂停待发送',
       pendingValue: '{when} 自动发送',
       pendingCancel: '取消暂停',
+      debugLabel: '调试模式（仅本机）',
+      debugHint: '打开后可强制峰时/谷时并快进时钟，用来验证卡片与自动发送是否符合预期；关掉即恢复真实时间。',
+      debugNow: '当前时间',
+      debugForceLabel: '强制档位',
+      debugForceAuto: '按真实时间',
+      debugForcePeak: '强制峰时',
+      debugForceOff: '强制谷时',
+      debugForceNear: '强制临近峰时',
+      debugClockLabel: '时钟快进',
+      debugClockReset: '复位',
+      // 调试区文案集中在这里，与正式设置项共用一份字典，避免两处各写一套
+      debugTierPeak: '峰时',
+      debugTierOff: '谷时',
     };
 
     // 英文文案：键与中文完全一一对应，缺键会让插件在英文界面下显示键名。
@@ -252,6 +265,18 @@ window.__ModuleLoader__.load({
       pendingLabel: 'Paused draft',
       pendingValue: 'sends at {when}',
       pendingCancel: 'Cancel pause',
+      debugLabel: 'Debug mode (this browser only)',
+      debugHint: 'Force peak/off-peak or fast-forward the clock to verify the card and auto-send; turn it off to return to real time.',
+      debugNow: 'Current time',
+      debugForceLabel: 'Forced tier',
+      debugForceAuto: 'Real time',
+      debugForcePeak: 'Force peak',
+      debugForceOff: 'Force off-peak',
+      debugForceNear: 'Force near peak',
+      debugClockLabel: 'Clock',
+      debugClockReset: 'Reset',
+      debugTierPeak: 'peak',
+      debugTierOff: 'off-peak',
     };
 
     /* ==================== 二、时间判定 ==================== */
@@ -547,6 +572,8 @@ window.__ModuleLoader__.load({
 
     // 出厂默认值：提前量 2 小时（够吃个午饭再回来发）、重复间隔 15 分钟、
     // 运行中也提醒、回车同样拦截。这四项都能在卡片里的设置面板改。
+    // 注意 debugMode/forceTier 也在这一份里：它们和正式设置存同一个 key，
+    // 好处是刷新页面后仍然保持上次的调试状态，省得每次都重新点一遍。
     const DEFAULT_SETTINGS = {
       leadMin: 120,            // 谷时提醒提前量：默认 2 小时
       repeatEnabled: true,     // 是否重复提醒
@@ -554,6 +581,8 @@ window.__ModuleLoader__.load({
       remindWhileRunning: true,// 对话运行时是否也提醒
       guardEnter: true,        // 回车发送是否同样拦截
       autoHoliday: true,       // 是否允许联网更新放假安排（关掉就只用本地缓存/内置表）
+      debugMode: false,        // 调试模式：默认关，只在本机浏览器里生效
+      forceTier: 'auto',       // 调试用：auto=按真实时间判定；peak/offPeak/near=强制档位
     };
 
     // 一律做钳制：提前量 1 分钟 ~ 24 小时；重复间隔 1 分钟 ~ 提前量（需求要求 t 不得大于提前量）
@@ -579,6 +608,10 @@ window.__ModuleLoader__.load({
         guardEnter: base.guardEnter !== false,
         // 默认开启：每年自动取放假安排是本插件的核心卖点，关掉只是给"完全不想联网"的人留个口子
         autoHoliday: base.autoHoliday !== false,
+        // 调试开关只认严格 true：localStorage 里手改成字符串也不会误开
+        debugMode: base.debugMode === true,
+        // 强制档位只认白名单，其余一律auto——避免旧数据把判定卡在一个不存在的档上
+        forceTier: ['peak', 'offPeak', 'near'].indexOf(base.forceTier) >= 0 ? base.forceTier : 'auto',
       };
     }
 
@@ -706,6 +739,79 @@ window.__ModuleLoader__.load({
     // ui-conversation 的翻译函数由 apply 注入；拿不到时退化为结构判定，不能让识别直接失效。
     let translateConversation = null;
 
+    /* ==================== 四之二、调试模式 ==================== */
+    // 需求原话是"仅我可调试"：实现上不做账号校验，而是做成
+    // 默认关闭 + 只写本机 localStorage 的开关。别人的插件实例看不到你的开关，
+    // 也就看不到这些调试控件；想要更强的隔离，把同一个开关改成"要输口令才能开"即可。
+    // 调试模式解决的是"想验一段特定时间，但一天只有那几个窗口"的问题：
+    // 打开后既可以快进时钟，也可以直接把当前档位强制成峰时/谷时/临近峰时。
+    // 它只改本机 localStorage 里的开关，不影响任何其他用户，也不需要服务端配合。
+
+    // 时钟偏移量（毫秒）：只在调试模式打开时参与判定，关掉瞬间等于没快进过。
+    // 有意不写进 localStorage：意外留下的"未来时钟"会让判定长期错乱，
+    // 刷新页面就归零比持久化更安全。
+    let debugOffsetMs = 0;
+
+    /**
+     * 供全部判定使用的"当前时间"。
+     * 真实时间 + 调试偏移；没开调试时就是 Date.now()，与线上行为完全一致。
+     * 注意：放假缓存的 12 小时有效期仍用真实时间，不受快进影响。
+     * @returns {number} 毫秒时间戳
+     */
+    // 为什么要有这么一层：判定函数全部以"传入的时间戳"为准，
+    // 只要这里换掉时间源，整条链路（门禁/倒计时/重复提醒/暂停待发）就一起快进了，
+    // 不需要在每个调用点各写一遍 if (debug)。
+    function nowMs() {
+      const offset = state.settings && state.settings.debugMode ? debugOffsetMs : 0;
+      return Date.now() + offset;
+    }
+
+    /**
+     * 当前"应该算峰时还是谷时"——把调试强制档也算进去的唯一入口。
+     * 判定逻辑本身（isPeak）保持纯函数，不掺调试；需要按用户视角看档位的地方都走这里。
+     * @param {number} now 毫秒时间戳
+     * @returns {'peak'|'offPeak'} 当前档位
+     */
+    // 供 UI 与"要不要重复提醒"这类地方共用；
+    // 刻意和 isPeak 分开：isPeak 必须保持纯函数，否则 nextSwitch 的扫描会被强制档带偏，
+    // 出现"永远扫不到翻转点"的死循环。
+    function effectiveTier(now) {
+      const forced = state.settings && state.settings.debugMode ? state.settings.forceTier : 'auto';
+      if (forced === 'peak') return 'peak';
+      if (forced === 'offPeak') return 'offPeak';
+      if (forced === 'near') return 'offPeak';         // 临近峰时属于谷时，只是余量少
+      return isPeak(now) ? 'peak' : 'offPeak';
+    }
+
+    /**
+     * 快进/倒退时钟（仅调试模式生效）。
+     * @param {number} deltaMs 增量毫秒，可为负
+     */
+    // 时钟按钮直接改偏移量而不是伪造时间戳：
+    // 偏移是累加的，点十次 +1m 就是 +10m，符合直觉；复位一按就回真实时间。
+    function advanceClock(deltaMs) {
+      // 没开调试时这些函数是空操作：本地按钮都渲染不出来，但防止有人从控制台直接调
+      if (!state.settings || !state.settings.debugMode) return;
+      debugOffsetMs += deltaMs;
+      setState({ now: nowMs() });
+    }
+
+    /**
+     * 复位调试时钟偏移，回到真实时间。
+     */
+    function resetClock() {
+      debugOffsetMs = 0;
+      setState({ now: nowMs() });
+    }
+
+    // 调试模式的使用清单（也是我验证插件时的顺序）：
+    // 1) 打开调试开关，确认状态行显示的时间是"现在"；
+    // 2) 点「强制峰时」，再点一次发送——应弹出峰时卡，点「返回」草稿还在；
+    // 3) 点「强制临近峰时」，再点发送——应弹出"仅剩"提醒，且消息照常发出；
+    // 4) 点「+1h」若干次，观察状态行的档位是否随虚拟时间在峰谷之间切换；
+    // 5) 测自动发送：在峰时点「暂停」，然后连续快进到转谷时刻，看消息是否自动发出；
+    // 6) 点「复位」并关掉调试开关，恢复真实时间与自动判定。
+
     /* ==================== 五、门禁判定与动作 ==================== */
     // 这一节回答两个问题：此刻该不该拦（gateAt）、拦下来之后三个按钮各做什么。
     // 动作函数都不直接操作 DOM，只改 store；真正的重放发生在 confirmSend 里。
@@ -722,6 +828,19 @@ window.__ModuleLoader__.load({
      */
     function gateAt(now) {
       if (state.dialog) return null;                 // 已有卡片时不叠加第二个
+      // 调试模式：先看强制档，命中就不再走真实时间判定
+      const forced = state.settings && state.settings.debugMode ? state.settings.forceTier : 'auto';
+      // 强制档只影响"弹什么卡"，不影响真实的峰谷计算；
+      // 关掉调试模式后 gateAt 立刻回到真实时间判定，不需要重启插件。
+      if (forced === 'peak') {
+        // 假装 1 小时后转谷时：卡片上的倒计时会正常走，方便看着它跳到 0h00m
+        return { kind: 'peak', atMs: now + 60 * MIN_MS };
+      }
+      if (forced === 'offPeak') return null;         // 强制谷时：任何情况下都不弹
+      if (forced === 'near') {
+        // 强制"临近峰时"：余量取提前量与 30 分钟中较小者，保证一定落进提醒窗口
+        return { kind: 'near', atMs: now + Math.min(state.settings.leadMs, 30 * MIN_MS) };
+      }
       if (isPeak(now)) {
         const next = nextSwitch(now);                // 峰时：卡片显示「还剩多久转谷时」
         return next ? { kind: 'peak', atMs: next.atMs } : null;
@@ -834,7 +953,7 @@ window.__ModuleLoader__.load({
         sessionId: String(composer.sessionId || ''),
         text,
         atMs: dialog.atMs,
-        savedAt: Date.now(),
+        savedAt: nowMs(),
       };
       // 落盘后才能算"暂停成功"：刷新页面也还在，第二天开机继续等谷时
       saveDefer(entry);
@@ -1111,7 +1230,7 @@ window.__ModuleLoader__.load({
         replayButton = null;
         return;
       }
-      const decision = gateAt(Date.now());
+      const decision = gateAt(nowMs());
       if (!decision) return;
       if (!blocks(decision)) {
         // 谷时提醒：只弹卡告知，不拦这次点击——消息照常发出去，卡片留在旁边直到用户点「知道了」
@@ -1153,7 +1272,7 @@ window.__ModuleLoader__.load({
       const composer = state.composer;
       if (!composer || composer.draftEmpty) return;
       if (!(event.target instanceof Element) || !event.target.closest('[data-composer-card]')) return;
-      const decision = gateAt(Date.now());
+      const decision = gateAt(nowMs());
       if (!decision) return;
       if (!blocks(decision)) {
         // 与点击同一套规则：谷时只告知、不拦，回车照常把内容发出去
@@ -1177,7 +1296,7 @@ window.__ModuleLoader__.load({
      * 重复提醒只在谷时临近峰时之间发生，进入峰时就停。
      */
     function tick() {
-      const now = Date.now();
+      const now = nowMs();
       // 巡检顺序有讲究：先处理待发，再处理卡片，
       // 这样"卡片刚被关掉"和"该自动发送"能落在同一轮里，不用等下一个 5 秒。
       // 暂停到谷时的自动发送：只在"没有卡片挡着"的时候动手，
@@ -1197,7 +1316,7 @@ window.__ModuleLoader__.load({
       // 重复提醒：只在「已经弹过首次谷时提醒之后」才计时
       const settings = state.settings;
       if (!settings.repeatEnabled || state.lastReminderAt <= 0) return;
-      if (isPeak(now)) return;
+      if (effectiveTier(now) === 'peak') return;
       const next = nextSwitch(now);
       if (!next || next.entering !== true) return;
       const remain = next.atMs - now;
@@ -1219,8 +1338,8 @@ window.__ModuleLoader__.load({
     function remindWhileRunning() {
       if (!state.settings.remindWhileRunning) return;
       if (state.dialog) return;
-      const now = Date.now();
-      if (isPeak(now)) return;
+      const now = nowMs();
+      if (effectiveTier(now) === 'peak') return;
       const next = nextSwitch(now);
       if (!next || next.entering !== true) return;
       const remain = next.atMs - now;
@@ -1332,6 +1451,15 @@ window.__ModuleLoader__.load({
       '.dpg-page .dpg-num:focus{border-color:var(--dsw-alias-brand-primary)}',
       '.dpg-page .dpg-unit{font-size:12px;color:var(--dsw-alias-label-secondary)}',
       '.dpg-page .dpg-hint{color:var(--dsw-alias-label-secondary)}',
+      // 调试区：按钮多、允许换行，深色卡与浅色页里都用同一套
+      // 调试区按钮较多，允许换行；右对齐与其它行保持一致的视觉节奏
+      '.dpg-wrap{flex-wrap:wrap;justify-content:flex-end;gap:6px}',
+      // 调试区与正式设置之间用一条虚线分隔，暗示"这块是给排查用的"
+      '.dpg-debug{margin-top:2px;padding-top:8px;border-top:1px dashed rgba(255,255,255,.14)}',
+      '.dpg-page .dpg-debug{border-top-color:var(--dsw-alias-border-l1)}',
+      // 当前生效的强制档高亮：不靠文字加粗，只靠底色，扫一眼就知道现在是哪一档
+      '.dpg-btn-active{background:rgba(88,140,255,.28);color:#fff}',
+      '.dpg-page .dpg-btn-active{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 18%,transparent);',
     ].join('\n');
 
     // 每个插件一个 <style data-plugin-css>，随 fiber 卸载一起移除
@@ -1563,6 +1691,68 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dpg-hint' }, t('holiHint')));
       }
 
+      /**
+       * 调试区：一行状态 + 四个强制档位 + 四个时钟按钮。
+       * 只在 settings.debugMode 打开时渲染，因此对普通用户完全不可见；
+       * 状态行显示的是"虚拟时间 + 当前判定"，方便对照卡片上的文案是否自洽。
+       * @returns {object} React 元素
+       */
+      function debugSection() {
+        const nowValue = props.now || nowMs();
+        const tier = effectiveTier(nowValue);
+        // 状态行故意把日期也带上：快进可能跨天，只看 HH:MM 会分不清是今天还是明天
+        const tierText = tier === 'peak' ? t('debugTierPeak') : t('debugTierOff');
+        // 强制档位按钮：active 表示当前生效的那一档，点击即切换
+        const forceButton = (key, label, testId) => h('button', {
+          type: 'button',
+          className: 'dpg-btn dpg-btn-ghost' + (settings.forceTier === key ? ' dpg-btn-active' : ''),
+          'data-testid': testId,
+          'data-active': settings.forceTier === key ? 'true' : 'false',
+          onClick: () => {
+            patchSettings({ forceTier: key });
+            setState({ now: nowMs() });      // 立刻刷新状态行，不用等下一次巡检
+          },
+        }, label);
+
+        return h('div', { className: 'dpg-col dpg-debug' },
+          h('div', { className: 'dpg-row' },
+            h('span', null, t('debugNow')),
+            h('span', { className: 'dpg-hint', 'data-testid': 'peak-guard-debug-now' },
+              `${formatUpdatedAt(nowValue)} · ${tierText}`)),
+          h('div', { className: 'dpg-row' },
+            h('span', null, t('debugForceLabel')),
+            h('span', { className: 'dpg-field dpg-wrap' },
+              forceButton('auto', t('debugForceAuto'), 'peak-guard-force-auto'),
+              forceButton('peak', t('debugForcePeak'), 'peak-guard-force-peak'),
+              forceButton('offPeak', t('debugForceOff'), 'peak-guard-force-off'),
+              forceButton('near', t('debugForceNear'), 'peak-guard-force-near'))),
+          h('div', { className: 'dpg-row' },
+            h('span', null, t('debugClockLabel')),
+            h('span', { className: 'dpg-field dpg-wrap' },
+              h('button', {
+                type: 'button', className: 'dpg-btn dpg-btn-ghost',
+                'data-testid': 'peak-guard-clock-1m',
+                onClick: () => advanceClock(MIN_MS),
+              }, '+1m'),
+              h('button', {
+                type: 'button', className: 'dpg-btn dpg-btn-ghost',
+                'data-testid': 'peak-guard-clock-10m',
+                onClick: () => advanceClock(10 * MIN_MS),
+              }, '+10m'),
+              h('button', {
+                type: 'button', className: 'dpg-btn dpg-btn-ghost',
+                'data-testid': 'peak-guard-clock-1h',
+                onClick: () => advanceClock(60 * MIN_MS),
+              }, '+1h'),
+              h('button', {
+                type: 'button', className: 'dpg-btn dpg-btn-ghost',
+                'data-testid': 'peak-guard-clock-reset',
+                onClick: () => resetClock(),
+              }, t('debugClockReset')))),
+          // 说明写在最后：先给控件、再给解释，符合设置页从上到下的阅读顺序
+          h('div', { className: 'dpg-hint' }, t('debugHint')));
+      }
+
       // 同一套控件在两个地方用：卡片里是深色小面板，设置页里是正常疏密度的偏好列表，
       // 靠 dpg-page 这个修饰类切换配色与间距，避免维护两份表单。
       return h('div', { className: props.variant === 'page' ? 'dpg-settings dpg-page' : 'dpg-settings' },
@@ -1601,7 +1791,13 @@ window.__ModuleLoader__.load({
 
         holidayRow(),
 
-        // 已暂停待发送：只有真的存了一条才出现，并提供「取消暂停」，免得用户忘了这回事。
+        // 调试模式是唯一会"改变判定结果"的开关，所以单独成段、并带一行说明；
+      // 其余开关只影响提醒何时出现，不会让峰谷判定本身变样。
+
+      // 调试模式放在正式设置之后、说明文字之前：
+      // 位置靠下不打扰日常使用，打开后又能立刻看到下面冒出来的调试区。
+
+      // 已暂停待发送：只有真的存了一条才出现，并提供「取消暂停」，免得用户忘了这回事。
         // 这一行同时充当"回执"：用户关掉卡片后仍能从设置里看到内容还没发出去，
         // 也能在反悔时一键取消，不必等它到点自动发走。时间只显示 HH:MM，
         // 跨天的情形极少（暂停最多等到下一个谷时开始），为了不撑破一行就不带日期。
@@ -1620,6 +1816,16 @@ window.__ModuleLoader__.load({
                   }, t('pendingCancel')))))
           : null,
 
+        // 调试模式：开关 + 强制档位 + 时钟快进，全部只在打开开关后出现
+        switchRow(t('debugLabel'), settings.debugMode, () => {
+          // 关掉时顺手把偏移清零，避免下次打开还在"未来"里
+          if (settings.debugMode) resetClock();
+          patchSettings({ debugMode: !settings.debugMode, forceTier: 'auto' });
+        }, 'peak-guard-debug-switch'),
+
+        // 关闭时不渲染调试区：普通用户永远只看到六个正式设置项
+        settings.debugMode ? debugSection() : null,
+
         h('div', { className: 'dpg-hint' }, t('leadHint')),
         settings.repeatEnabled ? h('div', { className: 'dpg-hint' }, t('repeatHint')) : null);
     }
@@ -1637,7 +1843,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dpg-page-wrap', 'data-peak-guard': 'page' },
         h('h2', { className: 'dpg-page-title' }, t('settingsTitle')),
         h('p', { className: 'dpg-page-desc' }, t('pageDesc')),
-        h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, t, variant: 'page' }),
+        h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, now: snapshot.now, t, variant: 'page' }),
         h('div', { className: 'dpg-page-hint' }, t('ruleText')));
     }
 
@@ -1698,7 +1904,7 @@ window.__ModuleLoader__.load({
           'data-peak-guard': 'settings',
         },
           h('div', { className: 'dpg-title' }, t('settingsTitle')),
-          h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, t }),
+          h(SettingsPanel, { settings: snapshot.settings, holi: snapshot.holi, defer: snapshot.defer, now: snapshot.now, t }),
           h('div', { className: 'dpg-hint' }, t('ruleText')),
           h('div', { className: 'dpg-actions' },
             h('span', { className: 'dpg-spacer' }),
@@ -1868,6 +2074,12 @@ window.__ModuleLoader__.load({
     if (typeof window !== 'undefined') {
       window.__dshPeakGuardDebug = {
         isPeak,
+        // 调试模式：测试可以快进时钟、强制档位，再断言 gateAt 的行为
+        nowMs,
+        effectiveTier,
+        advanceClock,
+        resetClock,
+        debugOffset: () => debugOffsetMs,
         nextSwitch,
         formatRemain,
         gateAt,
@@ -1883,6 +2095,7 @@ window.__ModuleLoader__.load({
         refreshHolidays,
         holidayInfo: () => holidayInfo,
         // 按钮识别与点击诊断：clickTrace 记录最近一次点击为什么命中/没命中
+        formatClock,
         findSubmitButton,
         conversationLabels,
         looksLikeSend,

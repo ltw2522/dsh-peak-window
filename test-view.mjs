@@ -146,6 +146,27 @@ assert.ok(page.buttons.some((b) => b.testId === 'peak-guard-holi-switch'),
 assert.ok(page.buttons.some((b) => b.testId === 'peak-guard-holi-refresh'),
   '设置页应有立即更新按钮');
 
+/* —— 场景四之二：调试模式 —— */
+// 默认关闭时，设置页里不该出现任何调试控件
+assert.ok(!page.buttons.some((b) => b.testId === 'peak-guard-force-peak'),
+  '未开调试时不应出现强制档位按钮');
+dbg.patchSettings({ debugMode: true });
+const dbgPage = collect(dbg.components.SettingsPage({ t }));
+const dbgText = dbgPage.texts.join(' ');
+assert.ok(dbgText.includes('调试模式'), '应出现调试模式开关');
+assert.ok(dbgText.includes('强制峰时'), '应出现强制峰时按钮');
+assert.ok(dbgText.includes('时钟快进'), '应出现时钟快进行');
+assert.ok(dbgPage.buttons.some((b) => b.testId === 'peak-guard-force-peak'), '缺少强制峰时');
+assert.ok(dbgPage.buttons.some((b) => b.testId === 'peak-guard-force-off'), '缺少强制谷时');
+assert.ok(dbgPage.buttons.some((b) => b.testId === 'peak-guard-force-near'), '缺少强制临近峰时');
+assert.ok(dbgPage.buttons.some((b) => b.testId === 'peak-guard-clock-1m'), '缺少 +1m 按钮');
+assert.ok(dbgPage.buttons.some((b) => b.testId === 'peak-guard-clock-reset'), '缺少时钟复位按钮');
+// 关掉调试后调试区整体消失
+dbg.patchSettings({ debugMode: false, forceTier: 'auto' });
+const plainPage = collect(dbg.components.SettingsPage({ t }));
+assert.ok(!plainPage.buttons.some((b) => b.testId === 'peak-guard-force-peak'),
+  '关掉调试后不应残留调试按钮');
+
 /* —— 场景五：关闭后不渲染任何节点 —— */
 dbg.dismissDialog();
 const empty = render({ t });

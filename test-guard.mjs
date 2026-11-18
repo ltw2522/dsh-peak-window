@@ -247,4 +247,36 @@ assert.strictEqual(dbg.readState().defer, null, '取消后应清空待发条目'
 // 时钟格式化
 assert.strictEqual(dbg.formatClock(at(11, 18, 14, 5)), '14:05', '时间格式应为 HH:MM');
 
-console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发');
+/* —— 调试模式：强制档位与时钟快进 —— */
+// 默认关闭：gateAt 完全按真实时间走，调试辅助函数也不该改时间
+dbg.patchSettings({ debugMode: false, forceTier: 'auto' });
+assert.strictEqual(dbg.debugOffset(), 0, '未开调试时偏移应为 0');
+
+dbg.patchSettings({ debugMode: true, forceTier: 'peak' });
+let g = dbg.gateAt(at(11, 21, 3, 0));            // 凌晨三点本来是谷时
+assert.strictEqual(g && g.kind, 'peak', '强制峰时应弹峰时卡');
+assert.strictEqual(g.atMs - at(11, 21, 3, 0), 60 * 60 * 1000, '强制峰时的倒计时应为 1 小时');
+
+dbg.patchSettings({ forceTier: 'offPeak' });
+assert.strictEqual(dbg.gateAt(at(11, 18, 10, 0)), null, '强制谷时即使真实是峰时也不弹卡');
+
+dbg.patchSettings({ forceTier: 'near' });
+g = dbg.gateAt(at(11, 18, 10, 0));
+assert.strictEqual(g && g.kind, 'near', '强制临近峰时应弹谷时提醒');
+assert.ok(g.atMs - at(11, 18, 10, 0) <= dbg.readState().settings.leadMs, '强制提醒的余量应落在提前量内');
+
+// 时钟快进：把虚拟时间推到峰时窗口，判定应随之改变
+dbg.patchSettings({ forceTier: 'auto' });
+const base = at(11, 18, 6, 0);                   // 早六点：谷时，离九点还有 3 小时
+assert.strictEqual(dbg.effectiveTier(base), 'offPeak', '早六点应是谷时');
+assert.strictEqual(dbg.gateAt(base), null, '早六点离峰时还有 3 小时，超过提前量，不该弹卡');
+dbg.advanceClock(4 * 60 * 60 * 1000);            // +4h → 十点
+assert.strictEqual(dbg.debugOffset(), 4 * 60 * 60 * 1000, '偏移应累计');
+// nowMs 用真实时间，这里只验证偏移量进入判定：直接拿带偏移的 now 去判
+assert.strictEqual(dbg.effectiveTier(dbg.nowMs()), 'peak', '快进到十点后应判为峰时');
+assert.strictEqual(dbg.gateAt(dbg.nowMs()).kind, 'peak', '快进到峰时后应弹峰时卡');
+dbg.resetClock();
+assert.strictEqual(dbg.debugOffset(), 0, '复位后偏移应归零');
+dbg.patchSettings({ debugMode: false, forceTier: 'auto' });
+
+console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发 / 调试模式');

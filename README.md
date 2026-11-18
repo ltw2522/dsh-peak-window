@@ -61,7 +61,7 @@ plugin_manager action=install_bundle target=<拷贝后的绝对路径，如 D:\t
 
 **② 单个 tgz（一个文件，最省事）**
 
-本目录下的 `dsh-peak-window-1.1.5.tgz` 就是打包产物（`pnpm pack` 重新生成）。对方：
+本目录下的 `dsh-peak-window-1.2.0.tgz` 就是打包产物（`pnpm pack` 重新生成）。对方：
 
 ```
 plugin_manager action=install_bundle target=<tgz 的绝对路径>
@@ -148,3 +148,17 @@ __dshPeakGuardDebug.readState()       // 当前设置与卡片状态
 ## 许可证
 
 MIT
+
+## 调试模式
+
+在「设置 → 峰时守卫」最下面打开**调试模式（仅本机）**，会多出三块控件：
+
+| 控件 | 作用 |
+| --- | --- |
+| 当前时间 | 显示虚拟时间与当前判定（峰时 / 谷时），快进跨天时一并显示日期 |
+| 强制档位 | 按真实时间 / 强制峰时 / 强制谷时 / 强制临近峰时，用来随时复现三种卡片 |
+| 时钟快进 | +1m / +10m / +1h / 复位，把"明天九点"瞬间变成现在，用来验倒计时与自动发送 |
+
+- 开关默认关闭，状态只存本机浏览器 localStorage（`dsh-peak-window:settings:v1` 的 `debugMode` 字段），别人的实例看不到也打不开。
+- 时钟偏移**不持久化**：刷新页面即回到真实时间，避免残留的"未来时钟"长期影响判定。
+- 关掉调试模式会同时把强制档复位为「按真实时间」，不需要重启 DSH。
