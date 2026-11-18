@@ -337,4 +337,13 @@ dbg.__test.setState({ dialog: null });
 assert.strictEqual(dbg.gateAt(at(11, 18, 15, 0)).kind, 'peak', '峰时确认卡不受静音影响');
 dbg.patchSettings({ repeatMutedUntil: 0 });
 
+/* —— 文案常量同步：界面文案有两份，client.js 内嵌的 ZH/EN 才是设置页与卡片真正用的 —— */
+// 踩坑：改了 locale/*.json 却忘改 client.js 内嵌常量时，界面看起来像"没更新"，
+// 实际是逻辑已生效、文案还是旧说法。这条断言把两份焊死，以后再漏改会直接报错。
+assert.ok(source.includes('本次谷时内不再弹出提醒卡'), 'client.js 内嵌 ZH 的 muteHint 应为新静音文案');
+assert.ok(source.includes('进入峰时前不再弹出提醒卡'), 'client.js 内嵌 ZH 的 muteRestoreHint 应为新文案');
+assert.ok(!source.includes('关掉「重复提醒」，进入峰时后自动恢复'), 'client.js 不应残留旧 muteHint');
+assert.ok(!source.includes('重复提醒已暂停，{when} 进入峰时后自动恢复'), 'client.js 不应残留旧 muteRestoreHint');
+assert.ok(source.includes('No reminders until {when}, when peak hours start'), 'client.js 内嵌 EN 的 muteRestoreHint 应同步');
+
 console.log('全部断言通过：峰谷判定 / 翻转点 / 文案 / 门禁 / 设置钳制 / 调休 / 联网更新 / 改名迁移 / 按钮匹配 / 暂停待发 / 调试模式 / 本次不再提醒');

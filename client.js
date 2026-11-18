@@ -179,8 +179,8 @@ window.__ModuleLoader__.load({
       backLabel: '返回',
       okLabel: '知道了',
       muteLabel: '本次不再提醒',
-      muteHint: '关掉「重复提醒」，进入峰时后自动恢复',
-      muteRestoreHint: '重复提醒已暂停，{when} 进入峰时后自动恢复',
+      muteHint: '本次谷时内不再弹出提醒卡，进入峰时后自动恢复',
+      muteRestoreHint: '本次不再提醒：{when} 进入峰时前不再弹出提醒卡',
       settingsLabel: '设置',
       settingsTitle: '峰时守卫设置',
       pageDesc: '发送前自动判定峰时与谷时：峰时先确认再发，谷时临近峰时提醒一次。下面这些设置对所有会话立即生效。',
@@ -238,8 +238,8 @@ window.__ModuleLoader__.load({
       backLabel: 'Back',
       okLabel: 'Got it',
       muteLabel: "Don't remind again",
-      muteHint: 'Turns off repeat reminders, restored automatically when peak starts',
-      muteRestoreHint: 'Repeat reminders paused; will be restored automatically at {when}',
+      muteHint: 'Suppresses every reminder card until the next peak window starts',
+      muteRestoreHint: 'No reminders until {when}, when peak hours start',
       settingsLabel: 'Settings',
       settingsTitle: 'Peak guard settings',
       pageDesc: 'Peak and off-peak are checked before every send: during peak you confirm first, and just before a peak window starts you get one reminder. Changes below apply to all conversations immediately.',
@@ -287,7 +287,7 @@ window.__ModuleLoader__.load({
 
     // 版本号由 build 时手工同步 package.json；调试出口会把它带出来，
     // 用来确认"浏览器里跑的到底是哪一版"（改完 CSS 没生效时尤其有用）。
-    const PLUGIN_VERSION = '1.2.5';
+    const PLUGIN_VERSION = '1.2.6';
 
     /* ==================== 二、时间判定 ==================== */
     // 全部是纯函数：输入时间戳，输出布尔值或时刻，不读全局状态，方便单测直接调。
