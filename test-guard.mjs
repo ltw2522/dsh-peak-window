@@ -272,9 +272,11 @@ assert.strictEqual(dbg.effectiveTier(base), 'offPeak', '早六点应是谷时');
 assert.strictEqual(dbg.gateAt(base), null, '早六点离峰时还有 3 小时，超过提前量，不该弹卡');
 dbg.advanceClock(4 * 60 * 60 * 1000);            // +4h → 十点
 assert.strictEqual(dbg.debugOffset(), 4 * 60 * 60 * 1000, '偏移应累计');
-// nowMs 用真实时间，这里只验证偏移量进入判定：直接拿带偏移的 now 去判
-assert.strictEqual(dbg.effectiveTier(dbg.nowMs()), 'peak', '快进到十点后应判为峰时');
-assert.strictEqual(dbg.gateAt(dbg.nowMs()).kind, 'peak', '快进到峰时后应弹峰时卡');
+// nowMs 走真实时钟，跑测试当天可能是周末或节假日，那样十点本来就该是谷时；
+// 所以这里改用固定工作日（2026-11-18 周三 10:00）验证「十点属峰时」这条判定本身，
+// 时钟偏移只由上面那行 offset 断言负责。
+assert.strictEqual(dbg.effectiveTier(at(11, 18, 10, 0)), 'peak', '周三十点应判为峰时');
+assert.strictEqual(dbg.gateAt(at(11, 18, 10, 0)).kind, 'peak', '峰时窗口内应弹峰时卡');
 dbg.resetClock();
 assert.strictEqual(dbg.debugOffset(), 0, '复位后偏移应归零');
 dbg.patchSettings({ debugMode: false, forceTier: 'auto' });

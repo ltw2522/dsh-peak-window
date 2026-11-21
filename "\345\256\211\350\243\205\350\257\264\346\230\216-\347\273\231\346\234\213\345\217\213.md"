@@ -1,0 +1,87 @@
+# dsh-peak-window 安装说明（给朋友，审核前可用）
+
+> 插件已发布到 npm（公开包，`latest = 1.2.6`），**不需要等插件市场收录**才能装。
+> 市场收录只决定它是否出现在 dshopen.org 的「官方目录」里，和能不能装没关系。
+
+## 0. 先确认环境
+
+| 项 | 要求 | 检查方法 |
+|---|---|---|
+| DSH 版本 | `>= 0.2.0-0 < 0.3.0-0` | DSH 关于/设置页，或看安装目录版本 |
+| Node | `>= 20` | `node -v` |
+| 网络 | 能访问 registry.npmjs.org | 安装时会用到；放假数据自动更新也走网络 |
+
+版本不符会被 `engines.dsh` 直接拦住，先升/降 DSH 再装。
+
+## 1. 方式一（推荐）：直接从 npm 装
+
+在 DSH 里新开一个会话，对 agent 说一句：
+
+```
+安装插件 dsh-peak-window@1.2.6
+```
+
+agent 会调用插件管理工具，等价于：
+
+```
+plugin_manager  action=install_bundle  target=dsh-peak-window@1.2.6
+```
+
+装完**必须重启 DSH**（客户端那一半是 Web 端模块，热重载不生效）。
+
+## 2. 方式二：离线 tgz（对方网络连不上 npm 时用）
+
+文件：`dsh-peak-window-1.2.6.tgz`（52,072 字节）
+
+已校验与 npm 上发布的**同一个产物**逐字节一致：
+
+| 校验 | 值 |
+|---|---|
+| sha1 | `f6831cd420341ad0dd413bfcddab8b763c6a3a03` |
+| sha512 (base64) | `tqwnWUU142VJURwogRKD3Gi2v/KdAzPSA0sWE34fHT/HKjYoLmLrSaJ5oHAQNXRlXpRILKu9KU8ZFGkRxAkFZQ==` |
+
+拿到后让对方把 tgz 放到任意目录，然后对它自己的 agent 说：
+
+```
+安装本地 tgz 插件：<tgz 的绝对路径>
+```
+
+即 `plugin_manager action=install_bundle target=<绝对路径>/dsh-peak-window-1.2.6.tgz`。
+若该 DSH 版本的 install_bundle 不接受本地路径，退回方式一，或让对方把 tgz 发我，我改成源码软链方式（方式三）。
+
+## 3. 方式三：源码开发模式（要改代码时才用）
+
+```
+git clone https://github.com/ltw2522/dsh-peak-window.git
+```
+
+然后在目标 profile 的 `node_modules/` 下对该目录做软链（本项目在本机就是这么挂的），
+再在 profile 的 `cordis.patch.yml` 里加对应 include 条目，重启 DSH。
+
+## 4. 装完怎么确认装上且生效
+
+1. **设置 → 峰时守卫设置** 面板出现（「谷时提醒提前量」「重复提醒」「放假安排」等行）；
+2. 输入框右侧工具栏出现小太阳/月亮图标；
+3. 浏览器控制台执行：
+   ```js
+   __dshPeakGuardDebug.version   // 应返回 "1.2.6"
+   ```
+4. 想临时看卡片长得对不对：设置页底部开「调试模式（仅本机）」，点「强制临近峰时」或「强制峰时」，
+   发一条消息就会弹卡；**看完点「复位」并关掉调试模式**，否则一直强制。
+
+## 5. 口径与行为（一句话版）
+
+- 峰时：工作日 09:00–12:00、14:00–18:00；周末、法定节假日、**调休补班的周末**全天谷价。
+- 峰时点发送 → 弹确认卡（返回 / 继续 / 暂停到谷时自动恢复执行）。
+- 谷时临近峰时 → 非阻断提醒，可点「本次不再提醒」静音到本段谷时结束。
+- 放假安排自动从 NateScarlet/holiday-cn 更新，离线时用内置表兜底。
+
+## 6. 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 装完没反应，设置页找不到 | 没重启 DSH；客户端插件必须重启进程 |
+| 卡片文案还是旧的 | 装的是 1.2.5 或更早；1.2.6 才把 locale JSON 与 client.js 内嵌文案同步，确认 `__dshPeakGuardDebug.version` |
+| 安装报 `engines.dsh` 不满足 | DSH 版本不在 0.2.x |
+| 报 `E404 Not Found - PUT`（发布者才会遇到） | 对未认证的 PUT，npm 常报 404 而不是 401，实为登录态失效 |
+| 放假数据一直「更新失败」 | 网络到不了 GitHub raw，不影响判峰谷，走内置表 |

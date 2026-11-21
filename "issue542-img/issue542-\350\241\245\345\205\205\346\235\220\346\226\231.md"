@@ -1,0 +1,64 @@
+# issue #542 补充材料（可直接粘贴）
+
+> 目标 issue：https://github.com/polang233/dsh-plugin-index/issues/542
+> 截图目录：`D:\dsh_workspace\dsh-peak-window\issue542-img\`
+
+## 一、待上传的 5 个文件
+
+| 文件 | 内容 | 尺寸 / 体积 |
+|---|---|---|
+| `01-peak-confirm.png` | 峰时确认卡整窗（红「继续」+ 灰「返回」+「暂停，谷时自动恢复执行」） | 1600×955 / 214 KB |
+| `02-valley-notice.png` | 谷时提醒卡整窗（「本次不再提醒」+「知道了」） | 1600×955 / 221 KB |
+| `03-settings-muted.png` | 设置 → 峰时守卫设置，静音行灰字「本次不再提醒：14:37 进入峰时前不再弹出提醒卡」 | 1600×955 / 301 KB |
+| `01b-peak-card-zoom.png` | 峰时卡 2× 特写 | 1000×560 / 88 KB |
+| `02b-valley-card-zoom.png` | 谷时卡 2× 特写 | 1000×440 / 80 KB |
+
+整窗图只裁掉了 Windows 任务栏（y≥1528），DSH 窗口本体（标题栏、标签栏、会话区、输入框）全部保留。
+
+## 二、issue 正文「插件实际效果」段替换文案
+
+```markdown
+### 插件实际效果 / Plugin screenshots
+
+**峰时（工作日 09:00–12:00、14:00–18:00）点发送先弹确认卡**：继续=放行，返回=退回并保留草稿；另有「暂停，谷时自动恢复执行」。
+
+![峰时确认卡](01-peak-confirm.png URL)
+
+**谷时距峰时不足提前量时弹一次不阻断的提醒卡**：「本次不再提醒」点下后整段谷时静音（直到进入峰时），「知道了」只关掉本次。
+
+![谷时提醒卡](02-valley-notice.png URL)
+
+**设置 → 峰时守卫设置**：提前量、重复提醒与静音状态一行灰字说明（「本次不再提醒：HH:MM 进入峰时前不再弹出提醒卡」）、运行中提醒、回车发送拦截、放假安排自动更新。
+
+![设置页](03-settings-muted.png URL)
+```
+
+## 三、可直接发的评论（把 URL 换成上传后的地址）
+
+```markdown
+已更新到 `dsh-peak-window@1.2.6`（npm latest 已是 1.2.6，2026-11-18 14:03 上线）。
+
+1.2.5 引入「本次不再提醒 = 整段谷时静音」，但设置页灰字与按钮悬停说明仍显示旧文案——原因是界面文案有两份（`locale/*.json` 只给插件列表用，设置页与卡片读的是 `client.js` 内嵌 `ZH`/`EN`），1.2.6 把两份同步并在 `test-guard.mjs` 加了文案断言。
+
+补上三张实际效果截图（峰时确认卡 / 谷时提醒卡 / 设置页静音行），截图版式为 1.2.6 真实界面：
+
+![峰时确认卡](URL)
+![谷时提醒卡](URL)
+![设置页](URL)
+
+- 仓库：https://github.com/ltw2522/dsh-peak-window
+- Release：https://github.com/ltw2522/dsh-peak-window/releases/tag/v1.2.6
+- npm：https://www.npmjs.com/package/dsh-peak-window
+```
+
+## 四、上传方式（二选一，都需要临时 token）
+
+```bash
+# 1) 上传到仓库（作为 issue 附件也可用 GitHub 的 user-attachments，需网页端拖拽）
+#    推荐走 API 传到仓库的 issue-assets 分支，再引用 raw 链接
+curl -X PUT "https://api.github.com/repos/ltw2522/dsh-peak-window/contents/issue542/01-peak-confirm.png" \
+  -H "Authorization: token <TOKEN>" -H "Content-Type: application/json" \
+  -d "{\"message\":\"docs: issue542 截图\",\"branch\":\"issue542-shots\",\"content\":\"$(base64 -w0 01-peak-confirm.png)\"}"
+```
+
+网页端更简单：打开 issue → 编辑正文 → 把 5 个文件直接拖进编辑框，GitHub 自动上传并回填 `https://github.com/user-attachments/assets/...` 链接。

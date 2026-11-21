@@ -2,4 +2,4 @@
 # 整个插件只有一行 Host 条目，界面完全由客户端的 ./client 模块注册。
 - insert:
     - id: peak-guard
-      name: dsh-peak-window
+      name: "@ltw2522/dsh-peak-window"
