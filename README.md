@@ -1,5 +1,7 @@
 # 峰时守卫 · dsh-peak-window
 
+[![开放插件市场](https://img.shields.io/endpoint?url=https%3A%2F%2Fdshopen.org%2Fbadge%2F%40ltw2522%2Fdsh-peak-window.json)](https://dshopen.org/zh/plugins/@ltw2522/dsh-peak-window/)
+
 DSH 插件：发送消息前自动判定峰时 / 谷时，替你挡一次不划算的提问。
 
 - **峰时**点「发送消息」→ 先弹一张深色确认卡（`继续` 红色放行、`返回` 浅灰退回去，草稿原样保留）；
@@ -13,7 +15,15 @@ DSH 插件：发送消息前自动判定峰时 / 谷时，替你挡一次不划�
 已发布到 npm 后，一条命令即可：
 
 ```
-plugin_manager action=install_bundle target=dsh-peak-window
+plugin_manager action=install_bundle target=@ltw2522/dsh-peak-window
+```
+
+> 包名 2026-11-21 起改为带 scope 的 `@ltw2522/dsh-peak-window`；旧名 `dsh-peak-window` 已在 npm 标记 deprecated，装新名即可。当前版本 **1.3.1**。
+
+装了「开放插件市场」的话更省事（插件页多一个「开放市场」标签，搜「峰时守卫」直接装、可一键更新）：
+
+```
+dsh plugin --profile desktop add dsh-open-market
 ```
 
 本地开发时指向目录也行：

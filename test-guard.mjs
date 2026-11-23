@@ -43,7 +43,10 @@ const fakeFetch = async (url) => {
 // client.js 是脚本（无 import/export），用 Function 注入 window 与 fetch 后执行
 new Function('window', 'fetch', source)(fakeWindow, fakeFetch);
 assert.ok(fakeWindow.__mod, '模块应已注册');
-assert.strictEqual(fakeWindow.__mod.id, 'dsh-peak-window');
+// 模块 id 必须与 package.json 的 name 逐字一致：宿主按条目名取模块，名字对不上时
+// 取不到也不报错，apply 永不执行，界面上表现为整块消失（改名漏改 id 就是这么翻车的）。
+const manifestName = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).name;
+assert.strictEqual(fakeWindow.__mod.id, manifestName, `模块 id 应等于 package.json 的 name（${manifestName}）`);
 
 // 极简 React 替身：只需要 createElement 与几个 hooks 的占位
 const React = {

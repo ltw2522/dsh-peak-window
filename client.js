@@ -15,7 +15,9 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-peak-window',
+  // 模块 id 必须与 package.json 的 name 完全一致：宿主按条目名去模块表里取这个模块，
+  // 名字对不上就取不到（取不到不会报错，只是 apply 永不执行，界面上表现为整块消失）。
+  id: '@ltw2522/dsh-peak-window',
   factory(require) {
     'use strict';
 
@@ -287,7 +289,7 @@ window.__ModuleLoader__.load({
 
     // 版本号由 build 时手工同步 package.json；调试出口会把它带出来，
     // 用来确认"浏览器里跑的到底是哪一版"（改完 CSS 没生效时尤其有用）。
-    const PLUGIN_VERSION = '1.2.6';
+    const PLUGIN_VERSION = '1.3.1';
 
     /* ==================== 二、时间判定 ==================== */
     // 全部是纯函数：输入时间戳，输出布尔值或时刻，不读全局状态，方便单测直接调。
